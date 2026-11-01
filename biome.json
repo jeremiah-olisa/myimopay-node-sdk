@@ -100,7 +100,8 @@
           },
           "style": {
             "noRestrictedGlobals": "off",
-            "noDefaultExport": "off"
+            "noDefaultExport": "off",
+            "useNamingConvention": "off"
           }
         }
       }

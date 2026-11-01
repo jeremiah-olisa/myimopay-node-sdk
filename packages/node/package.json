@@ -1,6 +1,6 @@
 {
   "name": "myimopay",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Typed, dependency-free Node.js SDK for the MyIMO Pay payment gateway (staging + live).",
   "keywords": [
     "myimopay",
@@ -56,5 +56,6 @@
   },
   "devDependencies": {
     "@myimopay/core": "0.0.0"
-  }
+  },
+  "private": false
 }
