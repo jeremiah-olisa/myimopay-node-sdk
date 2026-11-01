@@ -1,0 +1,69 @@
+{
+  "name": "myimopay-node-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "cd packages/node && bun run build && cd ../browser && bun run build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage --coverage-threshold=0.85",
+    "check:pkg": "publint packages/node packages/browser && attw --pack packages/node && attw --pack packages/browser",
+    "check:knip": "knip",
+    "check:size": "bun run build && size-limit",
+    "check:pack": "bun run scripts/verify-tarball.ts",
+    "check:browser": "bun run scripts/audit-browser-bundle.ts",
+    "check:universal": "bun run scripts/check-universal-core.ts",
+    "verify": "bun run lint && bun run typecheck && bun run test:coverage && bun run check:universal && bun run build && bun run check:pkg && bun run check:pack && bun run check:browser",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "bun run build && changeset publish",
+    "release:local": "bun run scripts/release-local.ts"
+  },
+  "size-limit": [
+    {
+      "name": "myimopay (esm)",
+      "path": "packages/node/dist/index.js",
+      "limit": "25 kB"
+    },
+    {
+      "name": "myimopay (cjs)",
+      "path": "packages/node/dist/index.cjs",
+      "limit": "25 kB"
+    },
+    {
+      "name": "myimopay-browser (esm)",
+      "path": "packages/browser/dist/index.js",
+      "limit": "8 kB"
+    }
+  ],
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@biomejs/biome": "^2.6.4",
+    "@changesets/cli": "^3.0.3",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@size-limit/preset-small-lib": "^14.3.0",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "knip": "^6.44.1",
+    "lefthook": "^2.2.2",
+    "publint": "^0.3.25",
+    "size-limit": "^14.3.0",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3"
+  }
+}

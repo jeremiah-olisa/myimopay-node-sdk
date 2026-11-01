@@ -1,0 +1,60 @@
+{
+  "name": "myimopay",
+  "version": "0.1.0",
+  "description": "Typed, dependency-free Node.js SDK for the MyIMO Pay payment gateway (staging + live).",
+  "keywords": [
+    "myimopay",
+    "payments",
+    "payment-gateway",
+    "nigeria",
+    "ngn",
+    "sdk",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Jeremiah Olisa",
+  "homepage": "https://github.com/jeremiah-olisa/myimopay-node-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeremiah-olisa/myimopay-node-sdk.git",
+    "directory": "packages/node"
+  },
+  "bugs": {
+    "url": "https://github.com/jeremiah-olisa/myimopay-node-sdk/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "import": "./dist/index.d.ts",
+        "require": "./dist/index.d.cts"
+      },
+      "browser": "./dist/browser-guard.js",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@myimopay/core": "workspace:*"
+  }
+}

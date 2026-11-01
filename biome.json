@@ -1,0 +1,148 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/*.d.ts",
+      "!**/package.json"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "all",
+      "semicolons": "always"
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConsole": "error",
+        "noDoubleEquals": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "error",
+        "useConst": "error",
+        "noParameterAssign": "error",
+        "useImportType": "error",
+        "useTemplate": "error",
+        "noDefaultExport": "error",
+        "useNamingConvention": {
+          "level": "error",
+          "options": {
+            "strictCase": false
+          }
+        },
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "axios": "This SDK is dependency-free. Use the built-in transport (src/http.ts).",
+              "node-fetch": "Node 20+ ships fetch. Use the built-in transport.",
+              "undici": "Node 20+ ships fetch. Use the built-in transport.",
+              "got": "This SDK is dependency-free. Use the built-in transport.",
+              "request": "This SDK is dependency-free. Use the built-in transport."
+            }
+          }
+        },
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "process": "Read env only through packages/node/src/env.ts.",
+              "Buffer": "Use Uint8Array so the SDK stays runtime-neutral.",
+              "window": "Use the injected WindowLike type instead of the global.",
+              "document": "Use the injected DocumentLike type instead of the global."
+            }
+          }
+        }
+      },
+      "complexity": {
+        "noForEach": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["scripts/**", "apps/**", "**/*.config.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "noRestrictedGlobals": "off",
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["commitlint.config.js", "*.config.js"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/core/src/types/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/core/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "node:crypto": "Webhooks live in packages/node. Core must stay runtime-neutral.",
+                  "node:fs": "Core must stay runtime-neutral.",
+                  "node:process": "Core must stay runtime-neutral."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+# @sdk-owner: A0-contracts
+# @sdk-phase: 1
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,md,yml,yaml}"
+      run: bunx biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  commands:
+    commitlint:
+      run: bunx commitlint --edit {1}
+
+pre-push:
+  parallel: false
+  commands:
+    gate:
+      run: bun run lint && bun run typecheck && bun run test

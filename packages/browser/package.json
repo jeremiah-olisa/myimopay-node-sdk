@@ -1,0 +1,55 @@
+{
+  "name": "myimopay-browser",
+  "version": "0.1.0",
+  "description": "Browser helpers for MyIMO Pay checkouts: open the hosted payment page, parse the return, format amounts. Keyless by design.",
+  "keywords": [
+    "myimopay",
+    "payments",
+    "checkout",
+    "browser",
+    "nigeria",
+    "ngn"
+  ],
+  "license": "MIT",
+  "author": "Jeremiah Olisa",
+  "homepage": "https://github.com/jeremiah-olisa/myimopay-node-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeremiah-olisa/myimopay-node-sdk.git",
+    "directory": "packages/browser"
+  },
+  "bugs": {
+    "url": "https://github.com/jeremiah-olisa/myimopay-node-sdk/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "import": "./dist/index.d.ts",
+        "require": "./dist/index.d.cts"
+      },
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@myimopay/core": "workspace:*"
+  }
+}
