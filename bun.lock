@@ -25,7 +25,7 @@
     "packages/browser": {
       "name": "myimopay-browser",
       "version": "0.1.0",
-      "dependencies": {
+      "devDependencies": {
         "@myimopay/core": "workspace:*",
       },
     },
@@ -36,7 +36,7 @@
     "packages/node": {
       "name": "myimopay",
       "version": "0.1.0",
-      "dependencies": {
+      "devDependencies": {
         "@myimopay/core": "workspace:*",
       },
     },

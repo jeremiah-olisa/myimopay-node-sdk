@@ -126,6 +126,16 @@
       }
     },
     {
+      "includes": ["packages/browser/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["packages/core/src/types/**"],
       "linter": {
         "rules": {

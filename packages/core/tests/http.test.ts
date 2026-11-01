@@ -217,7 +217,24 @@ describe('HttpClient headers and auth', () => {
     expect(calls.length).toBe(0);
   });
 
-  it('never lets per-call headers overwrite the auth headers', async () => {
+  it('rejects a per-call credential header instead of silently dropping it', async () => {
+    const { fetch, calls } = recordingFetch(() => jsonResponse(successEnvelope({ ok: true })));
+    const client = new HttpClient(configWith({ fetch }));
+
+    const error = await captureError(
+      client.request({
+        method: 'GET',
+        path: '/vi/pay/verify',
+        auth: 'secret',
+        headers: { 'xp-key': 'attacker', 'sp-key': 'attacker' },
+      }),
+    );
+
+    expect(error.code).toBe('VALIDATION_ERROR');
+    expect(calls.length).toBe(0);
+  });
+
+  it('keeps non-reserved per-call headers', async () => {
     const { fetch, calls } = recordingFetch(() => jsonResponse(successEnvelope({ ok: true })));
     const client = new HttpClient(configWith({ fetch }));
 
@@ -225,7 +242,7 @@ describe('HttpClient headers and auth', () => {
       method: 'GET',
       path: '/vi/pay/verify',
       auth: 'secret',
-      headers: { 'xp-key': 'attacker', 'sp-key': 'attacker', 'x-extra': 'kept' },
+      headers: { 'x-extra': 'kept' },
     });
 
     expect(headerOf(calls[0], 'xp-key')).toBe(PUBLIC_KEY);

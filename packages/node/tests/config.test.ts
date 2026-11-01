@@ -132,10 +132,52 @@ describe('resolveConfig', () => {
   });
 
   describe('environment', () => {
-    it('rejects a missing environment at runtime', () => {
+    it('rejects a config with neither environment nor baseUrl', () => {
       expectInvalidConfig(
         { publicKey: PUBLIC_KEY } as unknown as MyImoPayConfig,
-        /environment is required/,
+        /Provide `environment`.*or an explicit `baseUrl`/s,
+      );
+    });
+
+    it('accepts an explicit baseUrl without an environment', () => {
+      const resolved = resolveConfig({
+        baseUrl: 'https://proxy.example',
+        publicKey: PUBLIC_KEY,
+      } as MyImoPayConfig);
+
+      expect(resolved.environment).toBeNull();
+      expect(resolved.baseUrl).toBe('https://proxy.example');
+    });
+
+    it('lets a caller remap one environment host without changing the environment', () => {
+      const resolved = resolveConfig(
+        validConfig({ environments: { staging: 'https://tunnel.example' } }),
+      );
+      expect(resolved.environment).toBe('staging');
+      expect(resolved.baseUrl).toBe('https://tunnel.example');
+    });
+
+    it('lets baseUrl win over the environment map', () => {
+      const resolved = resolveConfig(
+        validConfig({
+          baseUrl: 'https://proxy.example',
+          environments: { staging: 'https://tunnel.example' },
+        }),
+      );
+      expect(resolved.baseUrl).toBe('https://proxy.example');
+    });
+
+    it('rejects an unknown key in the environment map', () => {
+      expectInvalidConfig(
+        validConfig({ environments: { statging: 'https://tunnel.example' } as never }),
+        /not a known environment/,
+      );
+    });
+
+    it('rejects a non-https environment override', () => {
+      expectInvalidConfig(
+        validConfig({ environments: { staging: 'http://tunnel.example' } }),
+        /https/,
       );
     });
 

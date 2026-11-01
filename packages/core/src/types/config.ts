@@ -83,6 +83,12 @@ export interface HttpRequestOptions {
   /** Overrides the configured timeout for this call only. */
   timeoutMs?: number;
   /**
+   * Treat a 2xx envelope with `data: null` as an empty result instead of a
+   * malformed response. Provider read routes use `null` for "nothing matched",
+   * so their resources opt in and map it to `[]` / `null`.
+   */
+  allowEmpty?: boolean;
+  /**
    * Marks a POST/PUT that is safe to retry because the provider de-duplicates
    * it (every write route in this API is keyed by a caller-supplied
    * reference/identifier). Defaults to false.

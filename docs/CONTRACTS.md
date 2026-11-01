@@ -1,3 +1,5 @@
+<!-- @sdk-owner: A13-docs -->
+
 # Frozen public contracts
 
 Every symbol below is public API for v1. Ten parallel workstreams implement
@@ -20,10 +22,11 @@ provider payload.
 Nothing is locked at construction time. From coarsest to finest:
 
 1. `environment: 'staging' | 'live'` selects the default host.
-2. `baseUrl` overrides that host for the whole client.
-3. `client.with({ ...overrides })` derives a new client (any option, including
+2. `environments: { staging?, live? }` remaps a host without changing the environment.
+3. `baseUrl` overrides that host for the whole client (and makes `environment` optional).
+4. `client.with({ ...overrides })` derives a new client (any option, including
    keys, timeout, retry, headers, guardrails). The original is untouched.
-4. Every resource method takes `RequestOptions` last, so a single call can
+5. Every resource method takes `RequestOptions` last, so a single call can
    override `baseUrl`, `timeoutMs`, `headers` and `signal`.
 
 Credentials are the one exception: they are never passed per call.
@@ -120,8 +123,12 @@ Each class extends `MyImoPayError` and carries `code: MyImoPayErrorCode`;
 | `toNumberOr`                             | `(value: Numeric \| null \| undefined, field: string, fallback: number) => number`                                          |
 | `normalizeNigerianPhone`                 | `(phone: string) => string`                                                                                                 |
 | `assertPhone`                            | `(phone: unknown, field?: string) => string`                                                                                |
+| `sanitizeCustomerName`                   | `(raw: string \| null \| undefined, options?: { fallback?: string; maxLength?: number }) => string`                         |
+| `normalizeCustomerEmail`                 | `(email: unknown, field?: string) => string \| undefined`                                                                   |
+| `deriveEmailFromPhone`                   | `(phone: string, domain: string) => string`                                                                                 |
 | `assertReference`                        | `(reference: unknown, field?: string) => string`                                                                            |
 | `createReference`                        | `(seed?: string, random?: () => number) => string`                                                                          |
+| `sanitizeReference`                      | `(value: string, random?: () => number) => string` — coerces any caller id into a valid `tx_ref`, deterministically         |
 | `MAX_REFERENCE_LENGTH`                   | `20`                                                                                                                        |
 | `REFERENCE_PATTERN`                      | `/^[A-Za-z0-9._-]+$/`                                                                                                       |
 | `maskValue` / `redact` / `redactHeaders` | `(value: string) => string` · `(value: unknown) => unknown` · `(headers: Record<string, string>) => Record<string, string>` |
@@ -140,52 +147,99 @@ Each class extends `MyImoPayError` and carries `code: MyImoPayErrorCode`;
 
 Re-exports the entire core surface plus:
 
-| Symbol                      | Signature                                                                                                                                          |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MyImoPay`                  | `new (config: MyImoPayConfig)`                                                                                                                     |
-| `MyImoPay.payments`         | `PaymentsResource`                                                                                                                                 |
-| `MyImoPay.transactions`     | `TransactionsResource`                                                                                                                             |
-| `MyImoPay.settlements`      | `SettlementsResource`                                                                                                                              |
-| `MyImoPay.banks`            | `BanksResource`                                                                                                                                    |
-| `MyImoPay.subaccounts`      | `SubaccountsResource`                                                                                                                              |
-| `MyImoPay.settlementOrders` | `SettlementOrdersResource`                                                                                                                         |
-| `MyImoPay#reference`        | `(seed?: string) => string`                                                                                                                        |
-| `MyImoPay#environment`      | `get environment(): 'staging' \| 'live'`                                                                                                           |
-| `MyImoPay#baseUrl`          | `get baseUrl(): string`                                                                                                                            |
-| `MyImoPay#with`             | `(overrides: Partial<MyImoPayConfig>) => MyImoPay` — derives a client with any option overridden                                                   |
-| `DEFAULT_BASE_URLS`         | `Readonly<Record<Environment, string>>` — staging `https://apipg.demo.myimopay.com`, live `https://api.myimopay.com`                               |
-| `MyImoPay.fromEnv`          | `(env?: EnvLike) => MyImoPay`                                                                                                                      |
-| `MyImoPay.webhooks`         | `{ constructEvent; verifyWebhookSignature; signWebhookPayload }`                                                                                   |
-| `createClient`              | `(config: MyImoPayConfig) => MyImoPay`                                                                                                             |
-| `MyImoPayConfig`            | `{ environment; publicKey; secretKey?; baseUrl?; timeoutMs?; retry?; headers?; publicKeyHeader?; secretKeyHeader?; fetch?; onDebug?; maxAmount? }` |
-| `ResourceContext`           | `{ readonly http: HttpClient; readonly maxAmount: number \| undefined }`                                                                           |
-| `EnvLike`                   | `{ readonly [key: string]: string \| undefined }`                                                                                                  |
-| `configFromEnv`             | `(env?: EnvLike) => MyImoPayConfig`                                                                                                                |
-| `readRawBody`               | `(source: AsyncIterable<Uint8Array>) => Promise<string>`                                                                                           |
-| `assertRawBodyString`       | `(body: unknown) => string`                                                                                                                        |
+| Symbol                      | Signature                                                                                                                                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MyImoPay`                  | `new (config: MyImoPayConfig)`                                                                                                                                                                                                       |
+| `MyImoPay.payments`         | `PaymentsResource`                                                                                                                                                                                                                   |
+| `MyImoPay.transactions`     | `TransactionsResource`                                                                                                                                                                                                               |
+| `MyImoPay.settlements`      | `SettlementsResource`                                                                                                                                                                                                                |
+| `MyImoPay.banks`            | `BanksResource`                                                                                                                                                                                                                      |
+| `MyImoPay.subaccounts`      | `SubaccountsResource`                                                                                                                                                                                                                |
+| `MyImoPay.settlementOrders` | `SettlementOrdersResource`                                                                                                                                                                                                           |
+| `MyImoPay#reference`        | `(seed?: string) => string`                                                                                                                                                                                                          |
+| `MyImoPay#environment`      | `get environment(): 'staging' \| 'live'`                                                                                                                                                                                             |
+| `MyImoPay#baseUrl`          | `get baseUrl(): string`                                                                                                                                                                                                              |
+| `MyImoPay#with`             | `(overrides: Partial<MyImoPayConfig>) => MyImoPay` — derives a client with any option overridden                                                                                                                                     |
+| `DEFAULT_BASE_URLS`         | `Readonly<Record<Environment, string>>` — staging `https://apipg.demo.myimopay.com`, live `https://api.myimopay.com`                                                                                                                 |
+| `MyImoPay.fromEnv`          | `(env?: EnvLike) => MyImoPay`                                                                                                                                                                                                        |
+| `MyImoPay.webhooks`         | `{ constructEvent; verifyWebhookSignature; signWebhookPayload }`                                                                                                                                                                     |
+| `createClient`              | `(config: MyImoPayConfig) => MyImoPay`                                                                                                                                                                                               |
+| `MyImoPayConfig`            | `{ environment?; environments?; publicKey; secretKey?; baseUrl?; timeoutMs?; retry?; headers?; publicKeyHeader?; secretKeyHeader?; fetch?; onDebug?; maxAmount?; customer? }` — `environment` is optional only when `baseUrl` is set |
+| `ResourceContext`           | `{ readonly http: HttpClient; readonly maxAmount: number \| undefined; readonly customer: ResolvedCustomerPolicy \| undefined }`                                                                                                     |
+| `ResolvedCustomerPolicy`    | `{ readonly sanitizeName: boolean; readonly requireEmail: boolean; readonly emailFallbackDomain: string \| undefined }`                                                                                                              |
+| `createPaymentEventBus`     | `(options?: PaymentEventBusOptions) => PaymentEventBus`                                                                                                                                                                              |
+| `EnvLike`                   | `{ readonly [key: string]: string \| undefined }`                                                                                                                                                                                    |
+| `configFromEnv`             | `(env?: EnvLike) => MyImoPayConfig`                                                                                                                                                                                                  |
+| `readRawBody`               | `(source: AsyncIterable<Uint8Array>) => Promise<string>`                                                                                                                                                                             |
+| `assertRawBodyString`       | `(body: unknown) => string`                                                                                                                                                                                                          |
+
+### Customer policy (`MyImoPayConfig.customer`)
+
+Defaults match what the provider accepts in practice; every switch is opt-out,
+so a caller that already normalises its own data is never second-guessed.
+
+| Option                | Type      | Default     | Effect                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------- | --------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sanitizeName`        | `boolean` | `true`      | Runs `sanitizeCustomerName` on `customer.fullName`: punctuation and accents folded to ASCII, lone one-letter words merged (`"H careplus"` → `"Hcareplus"`), single words padded (`"Techcourt"` → `"Techcourt Customer"`), unusable names → `"Valued Customer"`. `false` sends the name verbatim (whitespace collapsed only), for callers that normalise it themselves |
+| `requireEmail`        | `boolean` | `true`      | The provider schema marks `customer_email` optional but rejects initiations without one in practice, so a missing email fails locally with `VALIDATION_ERROR` before the payer is redirected. `false` omits the field                                                                                                                                                 |
+| `emailFallbackDomain` | `string`  | `undefined` | When set, a missing email is derived as `<phone>@domain` via `deriveEmailFromPhone` (USSD/POS flows). Fabricating an address is a product decision, so it is opt-in. Must be a bare domain such as `example.com`                                                                                                                                                      |
+
+Email values are trimmed; blank or whitespace-only means missing; a malformed
+address throws `VALIDATION_ERROR` before any network call.
 
 ### Resources
 
 | Symbol                     | Signature                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PaymentsResource`         | `initiate(input: InitiatePaymentInput, options?: RequestOptions): Promise<PaymentInitiation>` · `initiateSplit(input: InitiateSplitPaymentInput, options?: RequestOptions): Promise<PaymentInitiation>` · `verify(reference: string, options?: RequestOptions): Promise<VerifiedPayment>` · `verifyById(id: string, options?: RequestOptions): Promise<VerifiedPayment>` · `watch(reference: string, handlers?: PaymentWatchHandlers, options?: PaymentWatchOptions): PaymentWatcher`                                                                                                |
+| `PaymentsResource`         | `readonly events: PaymentEventBus` · `initiate(input: InitiatePaymentInput, options?: RequestOptions): Promise<PaymentInitiation>` · `initiateSplit(input: InitiateSplitPaymentInput, options?: RequestOptions): Promise<PaymentInitiation>` · `verify(reference: string, options?: RequestOptions): Promise<VerifiedPayment>` · `verifyById(id: string, options?: RequestOptions): Promise<VerifiedPayment>`                                                                                                                                                                        |
 | `TransactionsResource`     | `list(options?: RequestOptions): Promise<Transaction[]>` · `filter(query?: TransactionQuery, options?: RequestOptions): Promise<TransactionPage>` · `findByReference(reference: string, options?: RequestOptions): Promise<Transaction \| null>` · `findById(identifier: string, options?: RequestOptions): Promise<Transaction \| null>` · `summary(range?: DateRangeQuery, options?: RequestOptions): Promise<ProviderRecord>` · `statusCounts(options?: RequestOptions): Promise<ProviderRecord>` · `analytics(days?: number, options?: RequestOptions): Promise<ProviderRecord>` |
 | `SettlementsResource`      | `directs(query?: SettlementQuery, options?: RequestOptions): Promise<DirectSettlement[]>` · `splits(query?: SettlementQuery, options?: RequestOptions): Promise<SplitSettlement[]>` · `directByReference(reference: string, options?: RequestOptions): Promise<DirectSettlement \| null>` · `splitByReference(reference: string, options?: RequestOptions): Promise<SplitSettlement \| null>` · `splitByOrder(settlementOrderId: string, options?: RequestOptions): Promise<SplitSettlement[]>`                                                                                      |
 | `BanksResource`            | `list(countryCode: string, options?: RequestOptions): Promise<Bank[]>` · `resolve(input: { bankCode: string; accountNumber: string }, options?: RequestOptions): Promise<BankAccount>`                                                                                                                                                                                                                                                                                                                                                                                               |
 | `SubaccountsResource`      | `list(options?: RequestOptions): Promise<Subaccount[]>` · `get(id: string, options?: RequestOptions): Promise<Subaccount>` · `create(input: CreateSubaccountInput, options?: RequestOptions): Promise<Subaccount>`                                                                                                                                                                                                                                                                                                                                                                   |
 | `SettlementOrdersResource` | `list(options?: RequestOptions): Promise<SettlementOrder[]>` · `get(id: string, options?: RequestOptions): Promise<SettlementOrder>` · `create(input: CreateSettlementOrderInput, options?: RequestOptions): Promise<SettlementOrder>` · `update(id: string, input: CreateSettlementOrderInput, options?: RequestOptions): Promise<SettlementOrder>`                                                                                                                                                                                                                                 |
 
-### Payment lifecycle (`watch`)
+### Payment events (`payments.events`)
 
-| Symbol                 | Signature                                                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WatchOutcome`         | `'succeeded' \| 'failed' \| 'expired' \| 'timeout' \| 'aborted' \| 'error'`                                                                                            |
-| `PaymentWatchHandlers` | `{ onPending?; onSuccess?; onFailed?; onExpired?; onError?; onClose? }` — each `(payment: VerifiedPayment) => void \| Promise<void>`, `onClose(outcome: WatchOutcome)` |
-| `PaymentWatchOptions`  | `{ intervalMs?: number (3000); timeoutMs?: number (300000); signal?: AbortSignal; request?: RequestOptions }`                                                          |
-| `PaymentWatcher`       | `{ stop(): void; readonly done: Promise<VerifiedPayment \| null> }`                                                                                                    |
-| `watchPayment`         | `(verify: VerifyPayment, reference: string, handlers?: PaymentWatchHandlers, options?: PaymentWatchOptions) => PaymentWatcher`                                         |
+The server SDK has no polling API. `payments.watch` and `watchPayment` were
+removed: a library that polls verification on your behalf invites duplicate
+provider load and a self-inflicted denial of service, so reconciliation belongs
+in the caller's job scheduler. The lifecycle is event-based instead.
 
-Rules: exactly one of `onSuccess`/`onFailed`/`onExpired` fires; `onPending` may fire repeatedly; `onClose` always fires last, exactly once, and never leaves a timer behind. Handlers are awaited. A thrown handler stops the watch and rejects `done`.
+| Symbol                   | Signature                                                                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `PaymentEvent`           | `{ reference: string; providerReference: string \| null; status: PaymentStatus; raw: unknown }`                                           |
+| `PaymentEventOutcome`    | `'succeeded' \| 'failed' \| 'expired' \| 'timeout' \| 'cancelled'`                                                                        |
+| `PaymentEventHandlers`   | `{ onSuccess?; onFailed?; onExpired? }` — each `(event: PaymentEvent) => void \| Promise<void>`; `onClose?(outcome: PaymentEventOutcome)` |
+| `PaymentEventOptions`    | `{ ttlMs?: number }` — per-subscription lifetime, default 30 minutes                                                                      |
+| `PaymentEventBus`        | `on(reference, handlers, options?) => () => void` · `emit(event) => Promise<number>` · `readonly size: number` · `clear(): void`          |
+| `PaymentEventBusOptions` | `{ ttlMs?: number (1800000); maxSubscriptions?: number (10000) }`                                                                         |
+
+Call order and guarantees:
+
+1. `on()` subscribes to one reference before the payer is redirected and
+   returns an idempotent unsubscribe. A subscription is one in-memory map entry:
+   no timer, no polling and no background work, so the bus is idle until `emit`.
+2. `emit(event)` is called from the webhook route with a verified event. Only
+   terminal statuses deliver (`succeeded \| failed \| expired`); `initiated`,
+   `pending` and `unknown` emit nothing and return `0` without consuming the
+   subscription.
+3. Delivery happens once per reference. All live subscribers for that reference
+   receive the event (return value = delivery count), then the subscriptions are
+   dropped, so a re-delivered webhook returns `0` and cannot grant value twice.
+4. `onClose` fires exactly once and always last: the terminal delivery, an
+   `unsubscribe()`, TTL expiry (`timeout`), or `clear()`/cap eviction
+   (`cancelled` for `clear()`, `timeout` for a TTL sweep or eviction).
+5. Defaults: TTL 30 minutes, at most 10 000 live subscriptions. Subscribing past
+   the cap evicts the oldest subscription with `timeout`.
+6. Handler exceptions — sync or async — are swallowed, so subscriber code can
+   never fail a webhook response or a delivery.
+7. The bus is **per-process**. With more than one instance the webhook may land
+   on a process that holds no subscription and `emit` returns `0` there. Route
+   the delivery to the subscribing instance, or persist the outcome and
+   reconcile from your own store; cross-process delivery does not exist.
+8. The event is a **signal, not proof of amount**. It carries the reference and
+   the terminal status; re-read the amount from your own records (or
+   `payments.verify`) before granting value.
 
 ### Webhooks
 
@@ -204,7 +258,7 @@ No key parameter exists in this package, by design.
 | Symbol                  | Signature                                                                                                                                                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CheckoutMode`          | `'redirect' \| 'popup'`                                                                                                                                                                                     |
-| `CheckoutOutcome`       | `'redirected' \| 'closed' \| 'blocked' \| 'timeout' \| 'succeeded' \| 'failed' \| 'expired' \| 'cancelled' \| 'error'`                                                                                      |
+| `CheckoutOutcome`       | `'redirected' \| 'returned' \| 'closed' \| 'blocked' \| 'timeout' \| 'succeeded' \| 'failed' \| 'expired' \| 'error'`                                                                                       |
 | `WindowLike`            | `{ readonly closed: boolean; readonly location: { assign(url: string): void }; open(url: string, target?: string, features?: string): WindowLike \| null }`                                                 |
 | `CheckoutHandlers`      | `{ onOpen?(url); onReturn?(hint: CheckoutHint); onBlocked?(url); onSuccess?(p: VerifiedPayment); onFailed?(p); onExpired?(p); onCancelled?(); onError?(error: unknown); onClose?(result: CheckoutResult) }` |
 | `CheckoutOptions`       | `CheckoutHandlers & { mode?; window?; timeoutMs?; popupFeatures?; verify?: (reference: string) => Promise<VerifiedPayment>; pollIntervalMs? (2000); pollTimeoutMs? (120000) }`                              |
@@ -216,7 +270,7 @@ No key parameter exists in this package, by design.
 | `formatAmount`          | `(amount: number, currency?: string, locale?: string) => string`                                                                                                                                            |
 | `describePaymentStatus` | `(status: PaymentStatus) => string`                                                                                                                                                                         |
 
-Lifecycle rules: `onOpen` fires once; `onReturn` fires only via `resume()`; status callbacks **only** fire when `verify` is configured (the return URL is a hint, never proof); `onCancelled` covers closed/timeout without a terminal status; `onClose` always fires last, exactly once, and no poll survives it.
+Lifecycle rules: `onOpen` fires once; `onReturn` fires only via `resume()`; status callbacks **only** fire when `verify` is configured (the return URL is a hint, never proof); `resume()` resolves `returned` when there is no reference or no `verify`; `onCancelled` covers closed/timeout/returned without a terminal status; `onClose` always fires last, exactly once, and no poll survives it.
 
 ## Provider-quirk invariants
 

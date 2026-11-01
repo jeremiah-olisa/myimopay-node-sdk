@@ -1,11 +1,12 @@
 // @sdk-implemented-by: F2-primitives
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 import { MyImoPayValidationError } from '@core/errors';
 import {
   assertReference,
   createReference,
   MAX_REFERENCE_LENGTH,
   REFERENCE_PATTERN,
+  sanitizeReference,
 } from '@core/utils/reference';
 
 /** Runs `fn` and returns the validation error it must throw. */
@@ -153,5 +154,34 @@ describe('createReference', () => {
     const suffix = createReference('seed', constant(0.75)).slice('seed-'.length);
     expect(suffix).toBe('rrrr');
     expect(suffix).toMatch(/^[0-9a-z]{4}$/);
+  });
+});
+
+describe('sanitizeReference', () => {
+  it('coerces an id with slashes into a provider-valid reference', () => {
+    expect(sanitizeReference('INV/2026/0001')).toBe('INV-2026-0001');
+    expect(sanitizeReference('  order #42  ')).toBe('order-42');
+  });
+
+  it('keeps timestamps and UUID-shaped ids intact up to the limit', () => {
+    expect(sanitizeReference('1723456789012')).toBe('1723456789012');
+    expect(sanitizeReference('3f0c1e42-9a1b-4c7d-8e2f-0123456789ab')).toBe('3f0c1e42-9a1b-4c7d-8');
+  });
+
+  it('truncates to 20 characters without leaving a trailing separator', () => {
+    const result = sanitizeReference('abcdefghij/klmnopqrst/uvwxyz');
+    expect(result.length).toBeLessThanOrEqual(20);
+    expect(result).toMatch(REFERENCE_PATTERN);
+    expect(result.endsWith('-')).toBe(false);
+  });
+
+  it('is deterministic for the same input', () => {
+    expect(sanitizeReference('INV 2026/1')).toBe(sanitizeReference('INV 2026/1'));
+  });
+
+  it('falls back to a random reference when nothing usable remains', () => {
+    const result = sanitizeReference('///', () => 0.5);
+    expect(result).toHaveLength(MAX_REFERENCE_LENGTH);
+    expect(result).toMatch(REFERENCE_PATTERN);
   });
 });

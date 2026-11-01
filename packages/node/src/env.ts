@@ -49,12 +49,10 @@ function readRequired(env: EnvLike, name: string, hint: string): string {
   return value;
 }
 
-function readEnvironment(env: EnvLike): Environment {
-  const value = readRequired(
-    env,
-    ENVIRONMENT_VAR,
-    "Set it to 'staging' or 'live'. There is no default, because guessing it is how a staging build ends up billing a live account.",
-  );
+function readOptionalEnvironment(env: EnvLike): Environment | undefined {
+  const value = readString(env, ENVIRONMENT_VAR);
+
+  if (value === undefined) return undefined;
 
   if (value === 'staging' || value === 'live') return value;
 
@@ -89,8 +87,16 @@ function readNumber(env: EnvLike, name: string, hint: string): number | undefine
  * logger that could print merchant data into a log pipeline.
  */
 export function configFromEnv(env: EnvLike = {}): MyImoPayConfig {
+  const environment = readOptionalEnvironment(env);
+  const baseUrl = readString(env, BASE_URL_VAR);
+
+  if (environment === undefined && baseUrl === undefined) {
+    invalidConfig(
+      `Set ${ENVIRONMENT_VAR} ('staging' or 'live') or ${BASE_URL_VAR}. There is no default host, because guessing it is how a test charges a real card.`,
+    );
+  }
+
   const config: MyImoPayConfig = {
-    environment: readEnvironment(env),
     publicKey: readRequired(
       env,
       PUBLIC_KEY_VAR,
@@ -101,7 +107,7 @@ export function configFromEnv(env: EnvLike = {}): MyImoPayConfig {
   const secretKey = readString(env, SECRET_KEY_VAR);
   if (secretKey !== undefined) config.secretKey = secretKey;
 
-  const baseUrl = readString(env, BASE_URL_VAR);
+  if (environment !== undefined) config.environment = environment;
   if (baseUrl !== undefined) config.baseUrl = baseUrl;
 
   const timeoutMs = readNumber(

@@ -59,7 +59,8 @@ function sanitizeSeed(seed: string): string {
 export function assertReference(reference: unknown, field = 'reference'): string {
   const expected =
     `${field} must be 1 to ${MAX_REFERENCE_LENGTH} characters long, may only use ` +
-    '[A-Za-z0-9._-], and must contain at least one letter or digit';
+    '[A-Za-z0-9._-], and must contain at least one letter or digit. ' +
+    'Pass your own identifier through sanitizeReference() if it needs other characters.';
 
   if (typeof reference !== 'string') {
     throw new MyImoPayValidationError(`${expected}; received ${show(reference)}.`, field);
@@ -71,6 +72,33 @@ export function assertReference(reference: unknown, field = 'reference'): string
     throw new MyImoPayValidationError(`${expected}; received ${show(reference)}.`, field);
   }
   return reference;
+}
+
+/**
+ * Coerces any caller identifier into something the provider accepts.
+ *
+ * Use this when your canonical id is not reference-shaped — invoice numbers
+ * with slashes, UUIDs, timestamps with colons. It never throws: disallowed runs
+ * become `-`, separators are trimmed, the value is cut to 20 characters, and an
+ * identifier with nothing usable falls back to a random reference.
+ *
+ * The result is **not** re-seeded with a random suffix, so the same input
+ * always maps to the same reference. That matters: `tx_ref` is the provider's
+ * idempotency key, and a changing suffix would create a second payment.
+ */
+export function sanitizeReference(value: string, random: () => number = Math.random): string {
+  if (typeof value !== 'string') return randomChars(MAX_REFERENCE_LENGTH, random);
+
+  const cleaned = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^[._-]+/, '')
+    .replace(/[._-]+$/, '');
+
+  if (cleaned === '') return randomChars(MAX_REFERENCE_LENGTH, random);
+
+  const truncated = cleaned.slice(0, MAX_REFERENCE_LENGTH).replace(/[._-]+$/, '');
+  return truncated === '' ? randomChars(MAX_REFERENCE_LENGTH, random) : truncated;
 }
 
 /**

@@ -1,0 +1,164 @@
+# @sdk-owner: A10-release
+# @sdk-phase: 6
+
+# Tag-driven release: pushing `v<version>` verifies the tag against both
+# published packages, publishes them with provenance, then opens the GitHub
+# release.
+#
+# Authentication is OIDC trusted publishing only — there is no NPM_TOKEN in this
+# workflow and no fallback secret. Configure the trusted publisher once per
+# package on npmjs.com (Package settings → Trusted publishing → GitHub Actions:
+# repository `jeremiah-olisa/myimopay-node-sdk`, workflow `release.yml`,
+# environment `npm`). See docs/releasing.md.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Read-only by default; each job narrows further or adds exactly what it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: guard (tag matches both packages)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+
+      - name: Bare-metal gate — the tag must match both package versions
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          node_version="$(node -p "require('./packages/node/package.json').version")"
+          browser_version="$(node -p "require('./packages/browser/package.json').version")"
+
+          echo "tag:      ${tag}"
+          echo "myimopay: ${node_version}"
+          echo "browser:  ${browser_version}"
+
+          if [ "${node_version}" != "${browser_version}" ]; then
+            echo "::error::myimopay ${node_version} and myimopay-browser ${browser_version} are out of step; they are linked and must publish together."
+            exit 1
+          fi
+
+          if [ "${tag}" != "v${node_version}" ]; then
+            echo "::error::tag ${tag} does not match published version v${node_version}. Tag the merged release commit, not an earlier one."
+            exit 1
+          fi
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test:coverage
+
+      - name: Core stays runtime-neutral
+        run: bun run check:universal
+
+      - name: Build
+        run: bun run build
+
+      - name: publint + arethetypeswrong
+        run: bun run check:pkg
+
+  publish:
+    name: publish to npm (OIDC trusted publishing)
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      # No token: publishing authenticates with the OIDC identity below. The
+      # GitHub release is opened by the `release` job, so this job needs no
+      # write access to contents.
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+
+      # Node 24 ships npm 11, which is the floor for trusted publishing.
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      # The bootstrap release has to happen locally (a trusted publisher can only
+      # be configured on a package that already exists), and that local run also
+      # pushes the tag, which lands here. Keep this job idempotent.
+      - name: Is this version already on npm?
+        id: registry
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          if npm view "myimopay@${version}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::myimopay@${version} is already published; skipping the npm steps."
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Publish myimopay
+        if: steps.registry.outputs.exists == 'false'
+        run: npm publish --workspace myimopay --provenance --access public
+
+      - name: Publish myimopay-browser
+        if: steps.registry.outputs.exists == 'false'
+        run: npm publish --workspace myimopay-browser --provenance --access public
+
+  release:
+    name: GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Create the release with generated notes
+        run: |
+          set -euo pipefail
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "::notice::release ${GITHUB_REF_NAME} already exists; leaving it as it is."
+            exit 0
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

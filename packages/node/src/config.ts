@@ -13,8 +13,20 @@ import { assertHttpsUrl, isMyImoPayError, MyImoPayError } from '@myimopay/core';
  * mock servers and self-hosted gateways only.
  */
 export interface MyImoPayConfig {
-  /** `staging` (still real money) or `live`. */
-  environment: Environment;
+  /**
+   * `staging` (still real money) or `live`.
+   *
+   * Optional **only** when an explicit `baseUrl` is supplied. There is no
+   * implicit default: guessing the environment is how a staging build ends up
+   * billing a live account.
+   */
+  environment?: Environment;
+  /**
+   * Remaps the host for one or both environments without changing what
+   * `environment` means. Useful for a tunnel, a proxy or a provider staging
+   * host change. `baseUrl` still wins over this.
+   */
+  environments?: Partial<Record<Environment, string>>;
   /** Merchant public key, sent as `xp-key`. Never put this in a browser bundle. */
   publicKey: string;
   /** Merchant secret key, sent as `sp-key`. Needed for subaccounts and split orders. */
@@ -43,6 +55,32 @@ export interface MyImoPayConfig {
   onDebug?: (event: import('@myimopay/core').DebugEvent) => void;
   /** Refuses any initiation above this amount. Recommended in staging. */
   maxAmount?: number;
+  /**
+   * Customer-field policy. Defaults match what the provider accepts in
+   * practice (see docs/provider-notes.md); every switch is opt-out so a caller
+   * that already normalises its own data is never second-guessed.
+   */
+  customer?: {
+    /**
+     * Strip punctuation, merge one-letter words and pad single-word names.
+     * Default true. Disable to send `customer.fullName` verbatim.
+     */
+    sanitizeName?: boolean;
+    /**
+     * The provider rejects initiations without a customer email in practice,
+     * even though its schema marks the field optional. Default true: a missing
+     * email fails locally with an actionable error instead of a provider 400
+     * after the payer has been redirected. Disable only if you have verified
+     * the provider accepts your flow without one.
+     */
+    requireEmail?: boolean;
+    /**
+     * When set, a missing email is derived as `<phone>@domain` (for USSD/POS
+     * flows where the payer has no email). Off by default: fabricating an
+     * address is a product decision.
+     */
+    emailFallbackDomain?: string;
+  };
 }
 
 /**
@@ -64,7 +102,7 @@ export const DEFAULT_BASE_URLS: Readonly<Record<Environment, string>> = {
  * "what did the caller actually get" is answerable in one place.
  */
 export interface ResolvedConfig {
-  readonly environment: Environment;
+  readonly environment: Environment | null;
   readonly baseUrl: string;
   readonly publicKey: string;
   readonly secretKey: string | undefined;
@@ -74,9 +112,17 @@ export interface ResolvedConfig {
   readonly retry: Required<RetryConfig>;
   readonly headers: Record<string, string>;
   readonly maxAmount: number | undefined;
+  readonly customer: ResolvedCustomerPolicy;
   readonly fetch: FetchLike;
   readonly onDebug: ((event: DebugEvent) => void) | undefined;
   readonly userAgent: string;
+}
+
+/** Fully resolved customer policy; no optionality left. */
+export interface ResolvedCustomerPolicy {
+  readonly sanitizeName: boolean;
+  readonly requireEmail: boolean;
+  readonly emailFallbackDomain: string | undefined;
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -119,13 +165,54 @@ function formatValue(value: unknown): string {
   return typeof value;
 }
 
-function readEnvironment(value: unknown): Environment {
+function readEnvironment(value: unknown): Environment | null {
+  if (value === undefined) return null;
   if (value === 'staging' || value === 'live') return value;
   invalidConfig(
-    `environment is required and must be 'staging' or 'live' (received ${formatValue(
+    `environment must be 'staging' or 'live' when provided (received ${formatValue(
       value,
     )}). There is no default: guessing it is how a staging build ends up billing a live account.`,
   );
+}
+
+/**
+ * Validates a per-environment host override map.
+ *
+ * Unknown keys are rejected rather than ignored: `{ statging: '...' }` silently
+ * doing nothing is exactly the kind of typo that reaches production.
+ */
+function readEnvironments(value: unknown): Partial<Record<Environment, string>> {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    invalidConfig('environments must be an object such as { staging: "https://..." }.');
+  }
+
+  const source = value as Record<string, unknown>;
+  const resolved: Partial<Record<Environment, string>> = {};
+
+  for (const key of Object.keys(source)) {
+    if (key !== 'staging' && key !== 'live') {
+      invalidConfig(`environments.${key} is not a known environment. Use "staging" or "live".`);
+    }
+
+    const raw = source[key];
+    if (raw === undefined) continue;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      invalidConfig(`environments.${key} must be a non-empty https URL.`);
+    }
+
+    try {
+      assertHttpsUrl(raw, `environments.${key}`);
+      // Keep the caller's spelling; the transport joins paths without doubling
+      // slashes, and `client.baseUrl` should report what was configured.
+      resolved[key] = raw.trim();
+    } catch (error) {
+      if (!isMyImoPayError(error) || error.code !== 'VALIDATION_ERROR') throw error;
+      invalidConfig(`environments.${key} must be an absolute https URL without credentials.`);
+    }
+  }
+
+  return resolved;
 }
 
 function readPublicKey(value: unknown): string {
@@ -392,15 +479,62 @@ function readOnDebug(value: unknown): ((event: DebugEvent) => void) | undefined 
  * failure would be a 500 in a payment path. Error messages name the field and
  * the rule, never the credential.
  */
+function readCustomerPolicy(policy: MyImoPayConfig['customer']): ResolvedCustomerPolicy {
+  if (policy === undefined) {
+    return { sanitizeName: true, requireEmail: true, emailFallbackDomain: undefined };
+  }
+
+  if (typeof policy !== 'object' || policy === null) {
+    invalidConfig('customer must be an object when provided.');
+  }
+
+  const sanitizeName = policy.sanitizeName ?? true;
+  const requireEmail = policy.requireEmail ?? true;
+  if (typeof sanitizeName !== 'boolean') invalidConfig('customer.sanitizeName must be a boolean.');
+  if (typeof requireEmail !== 'boolean') invalidConfig('customer.requireEmail must be a boolean.');
+
+  let emailFallbackDomain: string | undefined;
+  if (policy.emailFallbackDomain !== undefined) {
+    if (typeof policy.emailFallbackDomain !== 'string') {
+      invalidConfig('customer.emailFallbackDomain must be a string.');
+    }
+    const domain = policy.emailFallbackDomain.trim().toLowerCase();
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) {
+      invalidConfig('customer.emailFallbackDomain must be a bare domain such as example.com.');
+    }
+    emailFallbackDomain = domain;
+  }
+
+  if (emailFallbackDomain === undefined && !requireEmail) {
+    // Valid: the caller has confirmed its flow needs no email.
+    return { sanitizeName, requireEmail, emailFallbackDomain: undefined };
+  }
+
+  return { sanitizeName, requireEmail, emailFallbackDomain };
+}
+
 export function resolveConfig(config: MyImoPayConfig): ResolvedConfig {
   if (typeof config !== 'object' || config === null) {
     invalidConfig('MyImoPay config must be an object with at least `environment` and `publicKey`.');
   }
 
   const environment = readEnvironment(config.environment);
+  const environments = readEnvironments(config.environments);
   const publicKey = readPublicKey(config.publicKey);
   const secretKey = readSecretKey(config.secretKey);
-  const baseUrl = readBaseUrl(config.baseUrl) ?? DEFAULT_BASE_URLS[environment];
+
+  const explicitBaseUrl = readBaseUrl(config.baseUrl);
+  const baseUrl =
+    explicitBaseUrl ??
+    (environment === null
+      ? undefined
+      : (environments[environment] ?? DEFAULT_BASE_URLS[environment]));
+
+  if (baseUrl === undefined) {
+    invalidConfig(
+      "Provide `environment` ('staging' or 'live') or an explicit `baseUrl`. There is no default host, because guessing it is how a test charges a real card.",
+    );
+  }
 
   const publicKeyHeader =
     config.publicKeyHeader === undefined
@@ -422,6 +556,7 @@ export function resolveConfig(config: MyImoPayConfig): ResolvedConfig {
     retry: readRetry(config.retry),
     headers: readHeaders(config.headers),
     maxAmount: readMaxAmount(config.maxAmount),
+    customer: readCustomerPolicy(config.customer),
     fetch: readFetch(config.fetch),
     onDebug: readOnDebug(config.onDebug),
     userAgent: USER_AGENT,
@@ -433,6 +568,10 @@ export function resolveConfig(config: MyImoPayConfig): ResolvedConfig {
  * explicit `undefined` (which `exactOptionalPropertyTypes` treats differently).
  * Used by `client.with(...)`.
  */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function mergeConfig(
   base: MyImoPayConfig,
   overrides: Partial<MyImoPayConfig>,
@@ -441,7 +580,17 @@ export function mergeConfig(
   const target = merged as unknown as Record<string, unknown>;
 
   for (const [key, value] of Object.entries(overrides)) {
-    if (value !== undefined) target[key] = value;
+    if (value === undefined) continue;
+
+    // Grouped options merge field-by-field, so `with({ retry: { attempts: 1 } })`
+    // keeps the caller's base delay instead of resetting the whole policy.
+    if ((key === 'retry' || key === 'customer') && isPlainObject(value)) {
+      const current = target[key];
+      target[key] = isPlainObject(current) ? { ...current, ...value } : value;
+      continue;
+    }
+
+    target[key] = value;
   }
 
   return merged;

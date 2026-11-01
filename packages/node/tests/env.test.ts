@@ -118,7 +118,7 @@ describe('configFromEnv', () => {
   it('names the missing environment variable', () => {
     expectInvalidConfig(
       () => configFromEnv(envOf([['MYIMOPAY_PUBLIC_KEY', PUBLIC_KEY]])),
-      /MYIMOPAY_ENVIRONMENT is not set/,
+      /Set MYIMOPAY_ENVIRONMENT.*or MYIMOPAY_BASE_URL/s,
     );
   });
 
@@ -164,6 +164,6 @@ describe('configFromEnv', () => {
   });
 
   it('reads nothing from the process when called with no argument', () => {
-    expectInvalidConfig(() => configFromEnv(), /MYIMOPAY_ENVIRONMENT is not set/);
+    expectInvalidConfig(() => configFromEnv(), /Set MYIMOPAY_ENVIRONMENT/);
   });
 });

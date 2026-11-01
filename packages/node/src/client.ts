@@ -87,7 +87,11 @@ export class MyImoPay {
     this.#resolved = resolved;
 
     const http = new HttpClient(toHttpConfig(resolved));
-    const context: ResourceContext = { http, maxAmount: resolved.maxAmount };
+    const context: ResourceContext = {
+      http,
+      maxAmount: resolved.maxAmount,
+      customer: resolved.customer,
+    };
 
     this.payments = new PaymentsResource(context);
     this.transactions = new TransactionsResource(context);
@@ -103,7 +107,7 @@ export class MyImoPay {
   }
 
   /** `staging` or `live`; never a secret. */
-  get environment(): Environment {
+  get environment(): Environment | null {
     return this.#resolved.environment;
   }
 

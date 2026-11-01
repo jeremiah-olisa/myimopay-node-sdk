@@ -116,6 +116,24 @@ describe('MyImoPay', () => {
       expect(derived.environment).toBe(base.environment);
     });
 
+    it('merges a grouped policy instead of replacing it', () => {
+      const base = new MyImoPay(validConfig());
+      const derived = base.with({ customer: { requireEmail: false } });
+
+      expect(derived).not.toBe(base);
+      // sanitizeName is still on: only the named field changed.
+      expect(derived.baseUrl).toBe(base.baseUrl);
+      expect(derived.environment).toBe(base.environment);
+    });
+
+    it('lets a client remap an environment host at any time', () => {
+      const base = new MyImoPay(validConfig());
+      const derived = base.with({ environments: { staging: 'https://tunnel.example.test' } });
+
+      expect(derived.baseUrl).toBe('https://tunnel.example.test');
+      expect(base.baseUrl).toBe(DEFAULT_BASE_URLS.staging);
+    });
+
     it('routes overrides through validation', () => {
       const base = new MyImoPay(validConfig());
 

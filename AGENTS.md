@@ -32,6 +32,16 @@ contract. Read `docs/CONTRACTS.md` first; it wins over any assumption.
 
 ## Hard constraints
 
+- **No polling, no timers, no background loops.** Payment lifecycle is
+  event-based (`payments.events.on` + `emit` from a verified webhook). A library
+  that polls the provider invites duplicate load and self-DoS; reconciliation
+  belongs to the caller's job scheduler.
+- **`tx_ref` is capped at 20 characters** and is the provider's idempotency key.
+  Validate it, never silently rewrite a caller's reference, and offer
+  `sanitizeReference` for identifiers that do not fit.
+- **Customer fields are provider-sensitive.** Names are normalised (punctuation,
+  lone initials, single words) and an email is required by default, because the
+  provider rejects the raw values in practice. Every normalisation is opt-out.
 - **No new runtime dependencies.** `dependencies` stays empty except the
   workspace link. Node 20 ships `fetch`; the browser package uses `URL` and
   `URLSearchParams` only.

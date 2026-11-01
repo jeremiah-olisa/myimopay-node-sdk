@@ -54,7 +54,7 @@
   "scripts": {
     "build": "tsup"
   },
-  "dependencies": {
-    "@myimopay/core": "workspace:*"
+  "devDependencies": {
+    "@myimopay/core": "0.0.0"
   }
 }

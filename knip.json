@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "packages/node": {},
+    "packages/browser": {},
+    "packages/core": {},
+    ".": {
+      "entry": ["examples/*.ts", "scripts/*.ts"]
+    }
+  },
+  "paths": {
+    "@myimopay/core": ["./packages/core/src/index.ts"],
+    "@core/*": ["./packages/core/src/*"],
+    "@node/*": ["./packages/node/src/*"],
+    "@browser/*": ["./packages/browser/src/*"]
+  },
+  "ignoreIssues": {
+    "packages/core/src/utils/redact.ts": ["exports"],
+    "packages/node/src/client.ts": ["types"]
+  }
+}

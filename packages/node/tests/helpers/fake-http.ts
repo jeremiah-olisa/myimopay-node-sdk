@@ -23,7 +23,7 @@ export function testHttpConfig(overrides: Partial<HttpConfig> = {}): HttpConfig 
 }
 
 /** Builds the response header the SDK normalises from the wire. */
-export function testHeader(overrides: Partial<ResponseHeader> = {}): ResponseHeader {
+function testHeader(overrides: Partial<ResponseHeader> = {}): ResponseHeader {
   return {
     isSuccess: true,
     status: 'success',
@@ -41,11 +41,6 @@ export function ok<T>(data: T, header: Partial<ResponseHeader> = {}): ApiResult<
     status: 200,
     raw: { header: { ['is_success']: true }, data },
   };
-}
-
-/** A rejected call, shaped like a real `MyImoPayApiError` would be. */
-export function fail(message = 'provider said no'): never {
-  throw new Error(message);
 }
 
 export type Responder = (

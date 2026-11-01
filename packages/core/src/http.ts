@@ -26,6 +26,17 @@ const MAX_RETRY_AFTER_MS = 300_000;
 const JITTER_MS = 100;
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 425, 429, 500, 502, 503, 504]);
 const REQUEST_ID_HEADERS = ['x-request-id', 'x-trace-id', 'x-correlation-id'] as const;
+const HEADER_NAME_PATTERN = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
+const RESERVED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  'host',
+  'content-length',
+  'content-type',
+  'authorization',
+  'connection',
+  'transfer-encoding',
+  'cookie',
+  'set-cookie',
+]);
 const ALREADY_COMPLETED_REMARKS = ['already completed'] as const;
 const DUPLICATE_REMARKS = ['already initiated', 'duplicate', 'already exists'] as const;
 
@@ -121,7 +132,7 @@ export class HttpClient {
       }
 
       try {
-        return this.unwrap<T>(outcome);
+        return this.unwrap<T>(outcome, options.allowEmpty === true);
       } catch (error) {
         this.emitDebug('error', method, path, attempt, {
           status: outcome.status,
@@ -252,6 +263,13 @@ export class HttpClient {
       );
     }
 
+    if (parsed.username !== '' || parsed.password !== '') {
+      throw new MyImoPayValidationError(
+        'The base URL must not contain embedded credentials. Keys belong in the SDK configuration, never in a URL.',
+        'baseUrl',
+      );
+    }
+
     return baseUrl;
   }
 
@@ -262,9 +280,9 @@ export class HttpClient {
     };
     if (options.body !== undefined) headers['content-type'] = 'application/json';
 
-    const isReserved = (name: string): boolean => this.isAuthHeaderName(name);
-    applyHeaders(headers, options.headers, isReserved);
-    applyHeaders(headers, this.config.headers, isReserved);
+    this.assertUserHeaders(options.headers);
+    applyHeaders(headers, options.headers);
+    applyHeaders(headers, this.config.headers);
 
     const auth = options.auth ?? 'public';
     if (auth === 'public' || auth === 'secret') {
@@ -281,6 +299,47 @@ export class HttpClient {
     }
 
     return headers;
+  }
+
+  /**
+   * Per-call headers are caller input, so they get the same treatment as
+   * configuration: no credential headers, no transport-level headers, no
+   * header injection.
+   */
+  private assertUserHeaders(userHeaders: Record<string, string> | undefined): void {
+    if (userHeaders === undefined) return;
+
+    for (const [name, value] of Object.entries(userHeaders)) {
+      const lower = name.toLowerCase();
+
+      if (this.isAuthHeaderName(lower)) {
+        throw new MyImoPayValidationError(
+          `"${name}" carries a credential and is configured on the client, not per call.`,
+          `headers.${name}`,
+        );
+      }
+
+      if (RESERVED_REQUEST_HEADERS.has(lower)) {
+        throw new MyImoPayValidationError(
+          `"${name}" is managed by the SDK and cannot be set per call.`,
+          `headers.${name}`,
+        );
+      }
+
+      if (!HEADER_NAME_PATTERN.test(lower)) {
+        throw new MyImoPayValidationError(
+          `"${name}" is not a valid header name. Use lowercase letters, digits and dashes.`,
+          `headers.${name}`,
+        );
+      }
+
+      if (/[\r\n]/.test(value) || /[\r\n]/.test(name)) {
+        throw new MyImoPayValidationError(
+          `Header "${name}" contains a newline. Header injection is not possible through this SDK.`,
+          `headers.${name}`,
+        );
+      }
+    }
   }
 
   private isAuthHeaderName(name: string): boolean {
@@ -311,7 +370,7 @@ export class HttpClient {
   }
 
   /** Unwraps `{ header, data }` for a 2xx response. */
-  private unwrap<T>(outcome: AttemptOutcome): ApiResult<T> {
+  private unwrap<T>(outcome: AttemptOutcome, allowEmpty: boolean): ApiResult<T> {
     const envelope = readEnvelope(outcome.parsed);
     const remark = readRemark(envelope.header);
 
@@ -327,6 +386,15 @@ export class HttpClient {
     }
 
     if (envelope.data === null || envelope.data === undefined) {
+      if (allowEmpty) {
+        return {
+          data: null as T,
+          header: normalizeHeader(envelope.header),
+          status: outcome.status,
+          raw: outcome.parsed,
+        };
+      }
+
       throw malformedResponseError(
         'The provider returned a successful response without a data payload.',
       );
@@ -521,11 +589,9 @@ function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
 function applyHeaders(
   target: Record<string, string>,
   source: Record<string, string> | undefined,
-  isReserved: (name: string) => boolean,
 ): void {
   if (source === undefined) return;
   for (const [name, value] of Object.entries(source)) {
-    if (isReserved(name)) continue;
     target[name] = value;
   }
 }
