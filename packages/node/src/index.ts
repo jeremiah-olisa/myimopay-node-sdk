@@ -3,7 +3,8 @@
 
 export * from '@myimopay/core';
 export { createClient, MyImoPay } from './client';
-export type { MyImoPayConfig } from './config';
+export type { MyImoPayConfig, ResolvedConfig } from './config';
+export { DEFAULT_BASE_URLS, mergeConfig, resolveConfig } from './config';
 export type { ResourceContext } from './context';
 export type { EnvLike } from './env';
 export { configFromEnv } from './env';

@@ -1,4 +1,9 @@
-import type { Environment } from '@myimopay/core';
+// @sdk-owner: A0-contracts
+// @sdk-phase: 1
+// @sdk-implemented-by: F3-assembly
+
+import type { DebugEvent, Environment, FetchLike, RetryConfig } from '@myimopay/core';
+import { assertHttpsUrl, isMyImoPayError, MyImoPayError } from '@myimopay/core';
 
 /**
  * Server configuration for `new MyImoPay(config)`.
@@ -38,6 +43,389 @@ export interface MyImoPayConfig {
   onDebug?: (event: import('@myimopay/core').DebugEvent) => void;
   /** Refuses any initiation above this amount. Recommended in staging. */
   maxAmount?: number;
+}
+
+/**
+ * Default provider hosts, keyed by environment.
+ *
+ * Both are overridable at any time: `config.baseUrl` overrides the environment
+ * for the whole client, `client.with({ baseUrl })` derives a client that points
+ * elsewhere, and every resource method accepts `{ baseUrl }` for a single call.
+ */
+export const DEFAULT_BASE_URLS: Readonly<Record<Environment, string>> = {
+  staging: 'https://apipg.demo.myimopay.com',
+  live: 'https://api.myimopay.com',
+};
+
+/**
+ * A caller config with every default applied and every value validated.
+ *
+ * This is the only shape the client and the transport are allowed to read, so
+ * "what did the caller actually get" is answerable in one place.
+ */
+export interface ResolvedConfig {
+  readonly environment: Environment;
+  readonly baseUrl: string;
+  readonly publicKey: string;
+  readonly secretKey: string | undefined;
+  readonly publicKeyHeader: string;
+  readonly secretKeyHeader: string;
+  readonly timeoutMs: number;
+  readonly retry: Required<RetryConfig>;
+  readonly headers: Record<string, string>;
+  readonly maxAmount: number | undefined;
+  readonly fetch: FetchLike;
+  readonly onDebug: ((event: DebugEvent) => void) | undefined;
+  readonly userAgent: string;
+}
+
+const DEFAULT_TIMEOUT_MS = 20_000;
+const MAX_TIMEOUT_MS = 120_000;
+const DEFAULT_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 10;
+const DEFAULT_BASE_DELAY_MS = 300;
+const MIN_BASE_DELAY_MS = 1;
+const MAX_BASE_DELAY_MS = 10_000;
+const DEFAULT_MAX_DELAY_MS = 5_000;
+const DEFAULT_PUBLIC_KEY_HEADER = 'xp-key';
+const DEFAULT_SECRET_KEY_HEADER = 'sp-key';
+const USER_AGENT = 'myimopay-node/0.1.0';
+const MIN_PUBLIC_KEY_LENGTH = 8;
+const MAX_AMOUNT_CEILING = 1_000_000_000;
+const HEADER_NAME_PATTERN = /^[a-z0-9-]+$/;
+
+/**
+ * Headers the SDK owns. Accepting them from a caller would let one override
+ * transport behaviour (framing, auth) and silently change what the signature
+ * covers, so they are rejected rather than merged.
+ */
+const RESERVED_HEADER_NAMES: ReadonlySet<string> = new Set([
+  'host',
+  'content-length',
+  'content-type',
+  'authorization',
+]);
+
+function invalidConfig(message: string): never {
+  throw new MyImoPayError({ code: 'INVALID_CONFIG', message });
+}
+
+/** Renders a rejected value without ever echoing key material. */
+function formatValue(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return String(value);
+  }
+  return typeof value;
+}
+
+function readEnvironment(value: unknown): Environment {
+  if (value === 'staging' || value === 'live') return value;
+  invalidConfig(
+    `environment is required and must be 'staging' or 'live' (received ${formatValue(
+      value,
+    )}). There is no default: guessing it is how a staging build ends up billing a live account.`,
+  );
+}
+
+function readPublicKey(value: unknown): string {
+  if (typeof value !== 'string') {
+    invalidConfig(
+      'publicKey must be a string. Use the merchant public key from the MyIMO Pay dashboard.',
+    );
+  }
+
+  const key = value.trim();
+
+  if (key.length === 0) {
+    invalidConfig(
+      'publicKey must not be empty. Use the merchant public key from the MyIMO Pay dashboard.',
+    );
+  }
+
+  if (key.length < MIN_PUBLIC_KEY_LENGTH) {
+    invalidConfig(
+      `publicKey must be at least ${MIN_PUBLIC_KEY_LENGTH} characters after trimming (received ${key.length}). Check that you pasted the whole key.`,
+    );
+  }
+
+  return key;
+}
+
+function readSecretKey(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+
+  if (typeof value !== 'string') {
+    invalidConfig('secretKey must be a string when provided.');
+  }
+
+  const key = value.trim();
+
+  if (key.length === 0) {
+    invalidConfig(
+      'secretKey must not be empty when provided. Omit it for public-key-only calls, or supply the merchant secret key.',
+    );
+  }
+
+  return key;
+}
+
+/**
+ * Validates a base URL with core's parser, then surfaces the failure as
+ * `INVALID_CONFIG` with a message about the config field rather than the
+ * helper's field-level wording.
+ *
+ * The caller's spelling is preserved (no `URL#href` re-serialisation) so
+ * `client.baseUrl` reports exactly what was configured.
+ */
+function readBaseUrl(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+
+  const baseUrl = typeof value === 'string' ? value.trim() : '';
+
+  try {
+    assertHttpsUrl(baseUrl, 'baseUrl');
+  } catch (error) {
+    // Only a rejected URL becomes INVALID_CONFIG; anything else is a real bug
+    // in the helper and must not be disguised as a caller mistake.
+    if (!isMyImoPayError(error) || error.code !== 'VALIDATION_ERROR') throw error;
+
+    invalidConfig(
+      'baseUrl must be an absolute https URL without embedded credentials, such as "https://api.myimopay.com". Plain http would send merchant credentials in clear text.',
+    );
+  }
+
+  return baseUrl;
+}
+
+function readTimeoutMs(value: unknown): number {
+  if (value === undefined) return DEFAULT_TIMEOUT_MS;
+
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    value > MAX_TIMEOUT_MS
+  ) {
+    invalidConfig(
+      `timeoutMs must be a number greater than 0 and at most ${MAX_TIMEOUT_MS} (received ${formatValue(
+        value,
+      )}).`,
+    );
+  }
+
+  return value;
+}
+
+function readAttempts(value: unknown): number {
+  if (value === undefined) return DEFAULT_ATTEMPTS;
+
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > MAX_ATTEMPTS) {
+    invalidConfig(
+      `retry.attempts must be an integer between 1 and ${MAX_ATTEMPTS} (received ${formatValue(
+        value,
+      )}).`,
+    );
+  }
+
+  return value;
+}
+
+function readBaseDelayMs(value: unknown): number {
+  if (value === undefined) return DEFAULT_BASE_DELAY_MS;
+
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < MIN_BASE_DELAY_MS ||
+    value > MAX_BASE_DELAY_MS
+  ) {
+    invalidConfig(
+      `retry.baseDelayMs must be an integer between ${MIN_BASE_DELAY_MS} and ${MAX_BASE_DELAY_MS} (received ${formatValue(
+        value,
+      )}).`,
+    );
+  }
+
+  return value;
+}
+
+function readMaxDelayMs(value: unknown, baseDelayMs: number): number {
+  if (value === undefined) return Math.max(DEFAULT_MAX_DELAY_MS, baseDelayMs);
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < baseDelayMs) {
+    invalidConfig(
+      `retry.maxDelayMs must be a number greater than or equal to retry.baseDelayMs (${baseDelayMs}); received ${formatValue(
+        value,
+      )}.`,
+    );
+  }
+
+  return value;
+}
+
+function readRetry(value: unknown): Required<RetryConfig> {
+  const source: { attempts?: unknown; baseDelayMs?: unknown; maxDelayMs?: unknown } =
+    typeof value === 'object' && value !== null ? value : {};
+
+  const baseDelayMs = readBaseDelayMs(source.baseDelayMs);
+
+  return {
+    attempts: readAttempts(source.attempts),
+    baseDelayMs,
+    maxDelayMs: readMaxDelayMs(source.maxDelayMs, baseDelayMs),
+  };
+}
+
+function readHeaderName(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    invalidConfig(`${field} must be a non-empty header name.`);
+  }
+
+  const name = value.trim();
+
+  if (name !== name.toLowerCase()) {
+    invalidConfig(
+      `${field} must be lowercase (received ${formatValue(
+        name,
+      )}). Header names are case-insensitive on the wire, so the SDK normalises them to avoid two spellings of the same header.`,
+    );
+  }
+
+  if (!HEADER_NAME_PATTERN.test(name)) {
+    invalidConfig(
+      `${field} must match ${HEADER_NAME_PATTERN.source} (lowercase letters, digits and hyphens only); received ${formatValue(
+        name,
+      )}.`,
+    );
+  }
+
+  if (RESERVED_HEADER_NAMES.has(name)) {
+    invalidConfig(
+      `${field} cannot be "${name}": host, content-length, content-type and authorization are managed by the SDK. Use publicKeyHeader/secretKeyHeader for credentials and \`headers\` for anything else.`,
+    );
+  }
+
+  return name;
+}
+
+function readHeaders(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    invalidConfig('headers must be a plain object mapping header names to string values.');
+  }
+
+  const headers: Record<string, string> = {};
+
+  for (const [rawName, rawValue] of Object.entries(value)) {
+    const name = readHeaderName(rawName, `headers[${formatValue(rawName)}]`);
+
+    if (typeof rawValue !== 'string') {
+      invalidConfig(`headers[${formatValue(rawName)}] must be a string.`);
+    }
+
+    if (/[\r\n]/.test(rawValue)) {
+      invalidConfig(`headers[${formatValue(rawName)}] must not contain line breaks.`);
+    }
+
+    headers[name] = rawValue;
+  }
+
+  return headers;
+}
+
+function readMaxAmount(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    value > MAX_AMOUNT_CEILING
+  ) {
+    invalidConfig(
+      `maxAmount must be greater than 0 and at most ${MAX_AMOUNT_CEILING} in major units (received ${formatValue(
+        value,
+      )}).`,
+    );
+  }
+
+  return value;
+}
+
+function readFetch(value: unknown): FetchLike {
+  if (value !== undefined) {
+    if (typeof value !== 'function') {
+      invalidConfig('fetch must be a function with the FetchLike signature.');
+    }
+
+    return value as FetchLike;
+  }
+
+  const globalFetch = (globalThis as { fetch?: FetchLike }).fetch;
+
+  if (typeof globalFetch !== 'function') {
+    invalidConfig(
+      "No global fetch found. Run this SDK on Node 20+, or pass `fetch` in the config (for example `undici`'s).",
+    );
+  }
+
+  return globalFetch;
+}
+
+function readOnDebug(value: unknown): ((event: DebugEvent) => void) | undefined {
+  if (value === undefined) return undefined;
+
+  if (typeof value !== 'function') {
+    invalidConfig('onDebug must be a function that receives DebugEvent objects.');
+  }
+
+  return value as (event: DebugEvent) => void;
+}
+
+/**
+ * Validates a caller config and applies every default.
+ *
+ * Fails fast with `INVALID_CONFIG` rather than deferring a bad host, a
+ * non-numeric timeout or a reserved header to the first network call, where the
+ * failure would be a 500 in a payment path. Error messages name the field and
+ * the rule, never the credential.
+ */
+export function resolveConfig(config: MyImoPayConfig): ResolvedConfig {
+  if (typeof config !== 'object' || config === null) {
+    invalidConfig('MyImoPay config must be an object with at least `environment` and `publicKey`.');
+  }
+
+  const environment = readEnvironment(config.environment);
+  const publicKey = readPublicKey(config.publicKey);
+  const secretKey = readSecretKey(config.secretKey);
+  const baseUrl = readBaseUrl(config.baseUrl) ?? DEFAULT_BASE_URLS[environment];
+
+  const publicKeyHeader =
+    config.publicKeyHeader === undefined
+      ? DEFAULT_PUBLIC_KEY_HEADER
+      : readHeaderName(config.publicKeyHeader, 'publicKeyHeader');
+  const secretKeyHeader =
+    config.secretKeyHeader === undefined
+      ? DEFAULT_SECRET_KEY_HEADER
+      : readHeaderName(config.secretKeyHeader, 'secretKeyHeader');
+
+  return {
+    environment,
+    baseUrl,
+    publicKey,
+    secretKey,
+    publicKeyHeader,
+    secretKeyHeader,
+    timeoutMs: readTimeoutMs(config.timeoutMs),
+    retry: readRetry(config.retry),
+    headers: readHeaders(config.headers),
+    maxAmount: readMaxAmount(config.maxAmount),
+    fetch: readFetch(config.fetch),
+    onDebug: readOnDebug(config.onDebug),
+    userAgent: USER_AGENT,
+  };
 }
 
 /**

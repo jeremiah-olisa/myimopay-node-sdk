@@ -1,10 +1,11 @@
 // @sdk-owner: A0-contracts
 // @sdk-phase: 1
+// @sdk-implemented-by: F3-assembly
 
 import type { Environment, HttpConfig } from '@myimopay/core';
-import { createReference, HttpClient } from '@myimopay/core';
-import type { MyImoPayConfig } from './config';
-import { mergeConfig } from './config';
+import { createReference, HttpClient, MyImoPayError } from '@myimopay/core';
+import type { MyImoPayConfig, ResolvedConfig } from './config';
+import { mergeConfig, resolveConfig } from './config';
 import type { ResourceContext } from './context';
 import type { EnvLike } from './env';
 import { configFromEnv } from './env';
@@ -17,54 +18,44 @@ import { TransactionsResource } from './resources/transactions';
 import type { WebhookEvent, WebhookOptions } from './webhooks';
 import { constructEvent, signWebhookPayload, verifyWebhookSignature } from './webhooks';
 
-/**
- * Default provider hosts, keyed by environment.
- *
- * Both are overridable at any time: `config.baseUrl` overrides the environment
- * for the whole client, `client.with({ baseUrl })` derives a client that points
- * elsewhere, and every resource method accepts `{ baseUrl }` for a single call.
- */
-export const DEFAULT_BASE_URLS: Readonly<Record<Environment, string>> = {
-  staging: 'https://apipg.demo.myimopay.com',
-  live: 'https://api.myimopay.com',
-};
+export { DEFAULT_BASE_URLS } from './config';
 
-const DEFAULT_TIMEOUT_MS = 20_000;
-const DEFAULT_ATTEMPTS = 3;
-const DEFAULT_BASE_DELAY_MS = 300;
-const DEFAULT_MAX_DELAY_MS = 5_000;
-const DEFAULT_PUBLIC_KEY_HEADER = 'xp-key';
-const DEFAULT_SECRET_KEY_HEADER = 'sp-key';
-const USER_AGENT = 'myimopay-node/0.1.0';
+const BROWSER_GUARD_MESSAGE =
+  'myimopay is server-only: it holds your merchant secret key, and a browser bundle is not a safe place for it. Install myimopay-browser for frontend checkout helpers — it is keyless by design and cannot leak your key.';
 
 /**
- * Fully resolves a caller config into the transport contract.
+ * Refuses to build a client where a browser global is visible.
  *
- * Core's `HttpConfig` has no optionality left by the time a request is built,
- * so every default lives here and nowhere else.
+ * The check reads through the global object instead of naming `window`, so it
+ * compiles and lints under Node without a DOM and cannot throw a
+ * `ReferenceError` in a runtime that has no window at all.
  */
-function resolveHttpConfig(config: MyImoPayConfig): HttpConfig {
-  const retry = config.retry;
+function assertServerRuntime(): void {
+  const scope: { window?: unknown } = globalThis;
+
+  if (scope.window !== undefined) {
+    throw new MyImoPayError({ code: 'SERVER_ONLY', message: BROWSER_GUARD_MESSAGE });
+  }
+}
+
+/** Projects the validated config onto the transport contract. */
+function toHttpConfig(resolved: ResolvedConfig): HttpConfig {
   const httpConfig: HttpConfig = {
-    baseUrl: config.baseUrl ?? DEFAULT_BASE_URLS[config.environment],
-    publicKey: config.publicKey,
-    publicKeyHeader: config.publicKeyHeader ?? DEFAULT_PUBLIC_KEY_HEADER,
-    secretKeyHeader: config.secretKeyHeader ?? DEFAULT_SECRET_KEY_HEADER,
-    timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    retry: {
-      attempts: retry?.attempts ?? DEFAULT_ATTEMPTS,
-      baseDelayMs: retry?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
-      maxDelayMs: retry?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS,
-    },
-    headers: { ...config.headers },
-    fetch: config.fetch ?? globalThis.fetch,
-    userAgent: USER_AGENT,
+    baseUrl: resolved.baseUrl,
+    publicKey: resolved.publicKey,
+    publicKeyHeader: resolved.publicKeyHeader,
+    secretKeyHeader: resolved.secretKeyHeader,
+    timeoutMs: resolved.timeoutMs,
+    retry: resolved.retry,
+    headers: resolved.headers,
+    fetch: resolved.fetch,
+    userAgent: resolved.userAgent,
   };
 
   // Optional keys are assigned conditionally so `exactOptionalPropertyTypes`
   // never has to treat an explicit `undefined` as a value.
-  if (config.secretKey !== undefined) httpConfig.secretKey = config.secretKey;
-  if (config.onDebug !== undefined) httpConfig.onDebug = config.onDebug;
+  if (resolved.secretKey !== undefined) httpConfig.secretKey = resolved.secretKey;
+  if (resolved.onDebug !== undefined) httpConfig.onDebug = resolved.onDebug;
 
   return httpConfig;
 }
@@ -83,12 +74,20 @@ export class MyImoPay {
   readonly subaccounts: SubaccountsResource;
   readonly settlementOrders: SettlementOrdersResource;
 
+  /** The caller config as given, kept so `with()` can derive from it. */
   readonly #config: MyImoPayConfig;
+  readonly #resolved: ResolvedConfig;
 
   constructor(config: MyImoPayConfig) {
-    this.#config = config;
-    const http = new HttpClient(resolveHttpConfig(config));
-    const context: ResourceContext = { http, maxAmount: config.maxAmount };
+    assertServerRuntime();
+
+    const resolved = resolveConfig(config);
+
+    this.#config = { ...config };
+    this.#resolved = resolved;
+
+    const http = new HttpClient(toHttpConfig(resolved));
+    const context: ResourceContext = { http, maxAmount: resolved.maxAmount };
 
     this.payments = new PaymentsResource(context);
     this.transactions = new TransactionsResource(context);
@@ -105,12 +104,12 @@ export class MyImoPay {
 
   /** `staging` or `live`; never a secret. */
   get environment(): Environment {
-    return this.#config.environment;
+    return this.#resolved.environment;
   }
 
   /** The resolved base URL currently in effect. */
   get baseUrl(): string {
-    return this.#config.baseUrl ?? DEFAULT_BASE_URLS[this.#config.environment];
+    return this.#resolved.baseUrl;
   }
 
   /**
