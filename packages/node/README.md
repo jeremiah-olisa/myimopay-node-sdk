@@ -150,6 +150,8 @@ event bus described under [Lifecycle](#lifecycle-paymentsevents).
 
 ### `client.payments`
 
+`amount` is major units (`1500` = ₦1,500.00), never kobo.
+
 ```ts
 initiate(input: InitiatePaymentInput, options?: RequestOptions): Promise<PaymentInitiation>
 initiateSplit(input: InitiateSplitPaymentInput, options?: RequestOptions): Promise<PaymentInitiation>
@@ -290,56 +292,60 @@ schedule and keep the retry policy in your job scheduler, not in this library.
 
 ## Webhooks
 
-The provider does not sign webhooks. You authenticate the delivery with a secret
-shared between the provider-side deployment and this endpoint, using HMAC-SHA256
-over the **raw request body**. That means the body must be read before any JSON
-parsing.
+MyIMO Pay does **not** sign deliveries, so there is nothing provider-issued to
+verify. Read the raw body first (before any JSON parsing), then choose one mode
+explicitly — there is no default:
+
+- **Signed** — you put a HMAC proxy in front of the endpoint and pass
+  `{ secret }`. `event.verified` is `true`.
+- **Unsigned** — the provider's real behaviour: pass `{ allowUnsigned: true }`.
+  `event.verified` is `false`, and the SDK **refuses to emit it** until you have
+  verified the payment yourself.
 
 ```ts
-import { assertRawBodyString, constructEvent, MyImoPayWebhookError } from 'myimopay';
+import { assertRawBodyString, constructEvent, isPaid } from 'myimopay';
 
-const rawBody = assertRawBodyString(req.body); // a Buffer, or req.text()
-const signature = req.header('x-myimopay-signature') ?? '';
+const rawBody = assertRawBodyString(req.body); // Buffer, or await req.text()
+const signature = req.header('x-myimopay-signature'); // present only with a proxy
 
-let event;
-try {
-  event = constructEvent(rawBody, signature, { secret: process.env.WEBHOOK_SECRET ?? '' });
-} catch (error) {
-  if (error instanceof MyImoPayWebhookError) {
-    res.status(401).json({ received: false });
-    return;
-  }
-  throw error;
+const event = constructEvent(rawBody, signature, { allowUnsigned: true });
+// event.verified === false — a hint, not proof.
+
+const payment = await client.payments.verify(event.reference);
+if (!isPaid(payment)) {
+  res.status(200).json({ received: true, ignored: payment.status });
+  return;
 }
 
-// Deliver to the subscriber that created the payment, in this process.
-// 0 means duplicate delivery, non-terminal status, or another instance.
-const delivered = await client.payments.events.emit(event);
-
+// The verified status is what the bus will accept.
+const delivered = await client.payments.events.emit(
+  { ...event, status: payment.status },
+  { allowUnverified: true },
+);
 res.status(200).json({ received: true, delivered });
 ```
 
-Always answer `200` for an authentic delivery: subscriber exceptions are
-swallowed by the bus, so there is nothing for the provider to retry. The
-subscriber is where the payment is verified and value is granted — see
-[Lifecycle](#lifecycle-paymentsevents).
+`emit` rejects an event marked `verified: false` unless you pass
+`{ allowUnverified: true }` — so a forged POST can never reach `onSuccess` just
+because it arrived. Always answer `200` for an authentic delivery: subscriber
+exceptions are swallowed by the bus, so there is nothing for the provider to
+retry.
 
 Framework notes:
 
 - **Express** — `app.post('/webhooks/myimopay', express.raw({ type: 'application/json' }), handler)`,
   then `const rawBody = req.body.toString('utf8')`. A global `express.json()` in
-  front of this route makes the digest unmatchable.
+  front of this route makes any signature unmatchable.
 - **Fastify** — register a buffer content-type parser:
-  `app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))`,
-  then pass `body` straight to `constructEvent`.
+  `app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))`.
 - **Next.js route handler** — `const rawBody = await req.text()`. Never
   `await req.json()` first.
 - **Streams** — `readRawBody(req)` drains an async iterable and enforces the
   1 MiB ceiling.
 
 `constructEvent` returns `{ reference, providerReference, status, rawStatus,
-isSettled, amountPaid, currency, eventId, raw }`. Both delivery shapes are
-accepted (`{ header, data }` and a bare payload). `headerName` defaults to
+isSettled, amountPaid, currency, eventId, verified, raw }`. Both delivery shapes
+are accepted (`{ header, data }` and a bare payload). `headerName` defaults to
 `x-myimopay-signature` and is descriptive only — you pass the digest value.
 
 Deduplicate on `eventId` when present: one payment produces several deliveries.

@@ -132,27 +132,35 @@ diagnostics hook must never break a live payment.
 ## Webhook verification
 
 MyIMO Pay does **not** sign webhooks. There is no provider-issued signature, no
-signing secret and no timestamp header. The SDK therefore authenticates a
-delivery with a secret shared between the provider-side deployment and your
-endpoint:
+signing secret and no timestamp header. That leaves exactly two honest modes,
+and the SDK makes you pick one explicitly — omitting both is a type error and a
+runtime error.
+
+**A. Signed (strongest).** If a proxy or internal forwarder adds
+`HMAC-SHA256(secret, rawBody)` as a hex header:
 
 1. Read the **raw bytes** before any JSON parsing (`readRawBody(stream)`,
-   `express.raw({ type: 'application/json' })`, `await req.text()`).
-2. Compute `HMAC-SHA256(secret, rawBody)` and hex-encode it.
-3. Compare it to the header value, **case-insensitively**, in constant time.
-4. Emit the verified event into `payments.events`
-   (`await client.payments.events.emit(event)`) and answer `200`. The subscriber
-   that created the payment is the only place value is granted.
+   `express.raw(...)`, `await req.text()`).
+2. `constructEvent(rawBody, signature, { secret })`.
+3. It compares case-insensitively in constant time, rejects a missing/empty/
+   malformed digest, an empty secret and an empty body, and never throws from
+   the comparison itself.
+4. `event.verified` is `true`.
 
-`verifyWebhookSignature` does exactly that with `timingSafeEqual`, rejects a
-missing/empty/malformed digest, an empty secret and an empty body, and never
-throws. `constructEvent` calls it first: an unverified delivery is never parsed
-into an event. `signWebhookPayload` produces the digest your tests and local
-replays should send.
+**B. Unsigned (the provider's real behaviour).**
 
-An empty `secret` is rejected rather than treated as "nothing to check" —
-accepting an unsigned delivery would let anyone POST a payment success. A
-delivery that fails verification is rejected, never "accepted but flagged".
+1. `constructEvent(rawBody, null, { allowUnsigned: true })` parses the payload
+   and returns `event.verified === false`.
+2. Call `payments.verify(event.reference)` and check `isPaid(...)`.
+3. Only then `events.emit({ ...event, status: payment.status }, { allowUnverified: true })`.
+
+The bus rejects a `verified: false` event unless `allowUnverified` is passed, so
+a forged POST cannot grant value by itself. Treat every webhook — signed or not
+— as a trigger: the amount always comes from your own records or a verification
+call, never from the request body.
+
+`signWebhookPayload` produces the digest your tests and local replays should
+send. `verifyWebhookSignature` is the standalone boolean check when you need it.
 
 ## Replay and terminality
 

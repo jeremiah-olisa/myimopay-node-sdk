@@ -27,6 +27,8 @@ const unsubscribe = client.payments.events.on(payment.reference, {
 
 // webhook route
 const event = MyImoPay.webhooks.constructEvent(rawBody, signature, { secret });
+// Unsigned (what the provider actually sends): { allowUnsigned: true }, then
+// `payments.verify(event.reference)` before emitting.
 await client.payments.events.emit(event);
 ```
 

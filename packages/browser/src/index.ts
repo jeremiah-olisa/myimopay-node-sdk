@@ -14,11 +14,15 @@ export {
 
 export type {
   Checkout,
+  CheckoutBaseHandlers,
+  CheckoutBaseOptions,
   CheckoutHandlers,
   CheckoutMode,
   CheckoutOptions,
   CheckoutOutcome,
   CheckoutResult,
+  CheckoutStatusHandlers,
+  VerifyCheckout,
   WindowLike,
 } from './checkout';
 export { createCheckout } from './checkout';

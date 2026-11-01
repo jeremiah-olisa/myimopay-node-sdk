@@ -28,20 +28,44 @@ export interface WebhookEvent {
   currency: string;
   /** Delivery identifier, when present. Used for de-duplication. */
   eventId: string | null;
+  /**
+   * `true` only when the delivery's HMAC was checked against your shared
+   * secret. An unsigned event is a trigger to verify, never proof of payment.
+   */
+  verified: boolean;
   /** Provider payload, untouched. */
   raw: unknown;
 }
 
-/** What `constructEvent` needs in order to authenticate a delivery. */
-export interface WebhookOptions {
-  /**
-   * Shared secret used for the HMAC both production integrations verify with.
-   * This is the merchant's own secret, not a provider-issued webhook key.
-   */
-  secret: string;
-  /** Header carrying the hex digest. Default `x-myimopay-signature`. */
-  headerName?: string;
-}
+/**
+ * Authentication for a webhook delivery. Exactly one mode, by type:
+ *
+ * - `{ secret }` — verify the HMAC over the raw body. `event.verified` is true.
+ * - `{ allowUnsigned: true }` — MyIMO Pay does not sign deliveries, so an
+ *   unsigned payload is parsed with `event.verified: false`. The caller **must**
+ *   then call `payments.verify(reference)` before granting value.
+ *
+ * There is no default: omitting both is a compile error and a runtime error.
+ */
+export type WebhookOptions =
+  | {
+      /** Your own shared secret, used for the HMAC both production integrations compute. */
+      secret: string;
+      /** Header carrying the hex digest. Default `x-myimopay-signature`. */
+      headerName?: string;
+      allowUnsigned?: never;
+    }
+  | {
+      /**
+       * Accept an unsigned delivery. Only legitimate because the provider does
+       * not sign webhooks. The payload is untrusted input: verify the payment
+       * server-side before doing anything with it.
+       */
+      allowUnsigned: true;
+      /** Header carrying the hex digest, when your proxy adds one. */
+      headerName?: string;
+      secret?: never;
+    };
 
 /** A lower-case SHA-256 digest, hex-encoded. Exactly what `signWebhookPayload` emits. */
 const SIGNATURE_PATTERN = /^[0-9a-f]{64}$/;
@@ -99,12 +123,13 @@ export function constructEvent(
   signature: string | null | undefined,
   options: WebhookOptions,
 ): WebhookEvent {
-  const supplied: { secret?: unknown; headerName?: unknown } = options;
+  const supplied: { secret?: unknown; headerName?: unknown; allowUnsigned?: unknown } = options;
+  const unsigned = supplied.allowUnsigned === true;
   const secret = supplied.secret;
 
-  if (typeof secret !== 'string' || secret.trim() === '') {
+  if (!unsigned && (typeof secret !== 'string' || secret.trim() === '')) {
     throw new MyImoPayWebhookError(
-      'WebhookOptions.secret is required: MyIMO Pay sends unsigned deliveries, so the SDK authenticates every webhook with the shared HMAC secret. An empty secret would accept any delivery, including a forged payment success.',
+      'WebhookOptions needs either a shared secret or allowUnsigned: true. MyIMO Pay does not sign deliveries, so an unsigned payload is parsed only when you opt in, and it must be verified server-side before value is granted.',
     );
   }
 
@@ -117,7 +142,7 @@ export function constructEvent(
     );
   }
 
-  if (!verifyWebhookSignature(rawBody, signature, secret)) {
+  if (!unsigned && !verifyWebhookSignature(rawBody, signature, secret as string)) {
     throw new MyImoPayWebhookError(SIGNATURE_INVALID_MESSAGE);
   }
 
@@ -143,6 +168,7 @@ export function constructEvent(
     amountPaid: toNumberOr(readNumeric(body, ['paid_amount', 'charged_amount']), 'paid_amount', 0),
     currency: readString(body, ['currency'])?.toUpperCase() ?? DEFAULT_CURRENCY,
     eventId: readString(body, ['id', 'identifier']),
+    verified: !unsigned,
     raw: parsed,
   };
 }

@@ -51,17 +51,13 @@ export interface WindowLike {
  * `verify` function is configured. The checkout return URL is a hint, never
  * proof of payment, so the SDK refuses to guess.
  */
-export interface CheckoutHandlers {
+export interface CheckoutBaseHandlers {
   /** The hosted page was opened or navigation started. */
   onOpen?: (url: string) => void;
   /** The payer came back to `callbackUrl`. `hint.verified` is always false. */
   onReturn?: (hint: CheckoutHint) => void;
   /** A popup blocker stopped the checkout before it started. */
   onBlocked?: (url: string) => void;
-  /** Verified as paid. */
-  onSuccess?: (payment: VerifiedPayment) => void;
-  onFailed?: (payment: VerifiedPayment) => void;
-  onExpired?: (payment: VerifiedPayment) => void;
   /** Closed or timed out without a terminal, verified status. */
   onCancelled?: () => void;
   /** `verify` threw or the verification poll gave up. */
@@ -70,7 +66,21 @@ export interface CheckoutHandlers {
   onClose?: (result: CheckoutResult) => void;
 }
 
-export interface CheckoutOptions extends CheckoutHandlers {
+/** Handlers that are only meaningful once a verification function exists. */
+export interface CheckoutStatusHandlers {
+  /** Verified as paid. */
+  onSuccess?: (payment: VerifiedPayment) => void;
+  onFailed?: (payment: VerifiedPayment) => void;
+  onExpired?: (payment: VerifiedPayment) => void;
+}
+
+/** Everything a checkout can call back with. */
+export interface CheckoutHandlers extends CheckoutBaseHandlers, CheckoutStatusHandlers {}
+
+/** Verifies a payment through the caller's own backend. Never the gateway. */
+export type VerifyCheckout = (reference: string) => Promise<VerifiedPayment>;
+
+export interface CheckoutBaseOptions extends CheckoutBaseHandlers {
   /** Default `redirect`. `popup` keeps the merchant page alive while paying. */
   mode?: CheckoutMode;
   /** The window to open into. Defaults to the caller's own window. */
@@ -79,17 +89,28 @@ export interface CheckoutOptions extends CheckoutHandlers {
   timeoutMs?: number;
   /** Passed straight to `window.open`. Default `width=480,height=720`. */
   popupFeatures?: string;
-  /**
-   * Server-side verification, normally your own endpoint wrapping
-   * `myimopay.payments.verify`. Enables `onSuccess`/`onFailed`/`onExpired`.
-   * Never call the gateway directly from a browser.
-   */
-  verify?: (reference: string) => Promise<VerifiedPayment>;
   /** Poll cadence after the payer returns. Default 2000ms. */
   pollIntervalMs?: number;
   /** Give up verifying after this long. Default 120000ms. */
   pollTimeoutMs?: number;
 }
+
+/**
+ * Options for `createCheckout`.
+ *
+ * The union is deliberate poka-yoke: `onSuccess`/`onFailed`/`onExpired` are a
+ * **type error** unless `verify` is supplied, because without a verification
+ * call the return URL cannot prove anything and those callbacks would never
+ * fire.
+ */
+export type CheckoutOptions =
+  | (CheckoutBaseOptions & CheckoutStatusHandlers & { verify: VerifyCheckout })
+  | (CheckoutBaseOptions & {
+      verify?: never;
+      onSuccess?: never;
+      onFailed?: never;
+      onExpired?: never;
+    });
 
 export interface CheckoutResult {
   outcome: CheckoutOutcome;

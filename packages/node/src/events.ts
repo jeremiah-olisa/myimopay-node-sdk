@@ -19,6 +19,12 @@ export interface PaymentEvent {
   providerReference: string | null;
   status: PaymentStatus;
   raw: unknown;
+  /**
+   * Set by the webhook helpers: `true` when the delivery's HMAC was checked.
+   * The bus refuses `false` unless the caller confirms it verified the payment
+   * itself, so a forged webhook cannot reach `onSuccess`.
+   */
+  verified?: boolean;
 }
 
 /**
@@ -50,14 +56,23 @@ export interface PaymentEventBus {
   /** Subscribes to one reference. Returns an idempotent unsubscribe. */
   on(reference: string, handlers: PaymentEventHandlers, options?: PaymentEventOptions): () => void;
   /**
-   * Delivers a verified event to every subscriber for its reference.
+   * Delivers an event to every subscriber for its reference.
    * Non-terminal statuses are ignored (returns 0). Returns the delivery count.
+   *
+   * An event explicitly marked `verified: false` is rejected unless
+   * `{ allowUnverified: true }` is passed, which is the caller's assertion that
+   * it verified the payment server-side first.
    */
-  emit(event: PaymentEvent): Promise<number>;
+  emit(event: PaymentEvent, options?: EmitOptions): Promise<number>;
   /** Live subscriptions, after lazily discarding expired ones. */
   readonly size: number;
   /** Closes every subscription with `cancelled`. */
   clear(): void;
+}
+
+export interface EmitOptions {
+  /** Required to emit an event whose `verified` flag is `false`. */
+  allowUnverified?: boolean;
 }
 
 export interface PaymentEventBusOptions {
@@ -182,9 +197,16 @@ export function createPaymentEventBus(options: PaymentEventBusOptions = {}): Pay
     };
   };
 
-  const emit: PaymentEventBus['emit'] = async (event) => {
+  const emit: PaymentEventBus['emit'] = async (event, emitOptions = {}) => {
     if (typeof event.reference !== 'string' || event.reference.trim() === '') {
       throw new MyImoPayValidationError('An event needs a payment reference.', 'reference');
+    }
+
+    if (event.verified === false && emitOptions.allowUnverified !== true) {
+      throw new MyImoPayValidationError(
+        'This webhook event is unverified. Call payments.verify(reference) and emit the verified status, or pass { allowUnverified: true } after verifying it yourself.',
+        'event.verified',
+      );
     }
 
     sweep(Date.now());

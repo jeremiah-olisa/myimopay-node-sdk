@@ -15,7 +15,7 @@
  * the flow is readable in one place.
  */
 
-import { MyImoPay } from 'myimopay';
+import { isPaid, MyImoPay } from 'myimopay';
 import {
   type CheckoutResult,
   createCheckout,
@@ -98,10 +98,16 @@ export async function createPopupPayment(
 
 /** POST /webhooks/myimopay — see examples/express-webhook.ts for the raw-body part. */
 export async function onWebhook(rawBody: string, signature: string | null): Promise<number> {
+  // Unsigned, as the provider sends it. Use { secret } when a proxy signs.
   const event = MyImoPay.webhooks.constructEvent(rawBody, signature, {
-    secret: 'whsec_replace_me',
+    allowUnsigned: true,
   });
-  return client.payments.events.emit(event);
+  const payment = await client.payments.verify(event.reference);
+  if (!isPaid(payment)) return 0;
+  return client.payments.events.emit(
+    { ...event, status: payment.status },
+    { allowUnverified: true },
+  );
 }
 
 // --------------------------------------------------------------------------

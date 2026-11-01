@@ -21,6 +21,7 @@
 import {
   assertRawBodyString,
   constructEvent,
+  isPaid,
   MyImoPay,
   MyImoPayWebhookError,
   type WebhookEvent,
@@ -38,9 +39,6 @@ interface ResponseLike {
   json(body: unknown): void;
 }
 
-/** Replace with a value read from your secret manager at boot. */
-const WEBHOOK_SECRET = 'whsec_replace_me';
-
 const client = new MyImoPay({
   environment: 'staging',
   publicKey: 'pk_staging_replace_me',
@@ -53,23 +51,36 @@ export async function handle(req: RequestLike, res: ResponseLike): Promise<void>
   let event: WebhookEvent;
 
   try {
+    // MyIMO Pay does not sign deliveries. If a proxy signs for you, pass
+    // { secret } instead and skip the verification call below.
     event = constructEvent(rawBody, req.header('x-myimopay-signature'), {
-      secret: WEBHOOK_SECRET,
+      allowUnsigned: true,
     });
   } catch (error) {
     if (error instanceof MyImoPayWebhookError) {
-      // Unsigned, malformed or tampered with. Process nothing.
-      res.status(401).json({ received: false });
+      // Malformed payload. Process nothing.
+      res.status(400).json({ received: false });
       return;
     }
     throw error;
+  }
+
+  // A webhook is a trigger, never proof. Read the amount from your own records
+  // or from a verification call before granting anything.
+  const payment = await client.payments.verify(event.reference);
+  if (!isPaid(payment)) {
+    res.status(200).json({ received: true, ignored: payment.status });
+    return;
   }
 
   // Delivers to every subscriber of this reference in *this* process and closes
   // them. A re-delivered webhook returns 0 and grants nothing a second time.
   // With several instances the delivery may land elsewhere: route it to the
   // subscribing instance, or persist the outcome and reconcile later.
-  const delivered = await client.payments.events.emit(event);
+  const delivered = await client.payments.events.emit(
+    { ...event, status: payment.status },
+    { allowUnverified: true },
+  );
 
   // Always acknowledge an authentic delivery: subscriber failures are
   // swallowed by the bus, so there is nothing here for the provider to retry.

@@ -19,7 +19,13 @@
  * That subscriber — not this handler — decides whether money actually moved.
  */
 
-import { constructEvent, MyImoPay, MyImoPayWebhookError, type WebhookEvent } from 'myimopay';
+import {
+  constructEvent,
+  isPaid,
+  MyImoPay,
+  MyImoPayWebhookError,
+  type WebhookEvent,
+} from 'myimopay';
 
 // Structural Fastify types, so this file needs no `fastify` dependency.
 interface FastifyRequestLike {
@@ -32,9 +38,6 @@ interface FastifyReplyLike {
   code(statusCode: number): FastifyReplyLike;
   send(payload: unknown): void;
 }
-
-/** Replace with a value read from your secret manager at boot. */
-const WEBHOOK_SECRET = 'whsec_replace_me';
 
 const client = new MyImoPay({
   environment: 'staging',
@@ -56,19 +59,29 @@ export async function handle(request: FastifyRequestLike, reply: FastifyReplyLik
   let event: WebhookEvent;
 
   try {
-    event = constructEvent(body, signature, { secret: WEBHOOK_SECRET });
+    // Unsigned, as the provider sends it. Use { secret } when a proxy signs.
+    event = constructEvent(body, signature, { allowUnsigned: true });
   } catch (error) {
     if (error instanceof MyImoPayWebhookError) {
-      reply.code(401).send({ received: false });
+      reply.code(400).send({ received: false });
       return;
     }
     throw error;
   }
 
+  const payment = await client.payments.verify(event.reference);
+  if (!isPaid(payment)) {
+    reply.code(200).send({ received: true, ignored: payment.status });
+    return;
+  }
+
   // The bus is per-process. A delivery that lands on an instance without the
   // subscription returns 0; route webhooks to the subscribing instance or
   // persist the outcome and reconcile from your own store.
-  const delivered = await client.payments.events.emit(event);
+  const delivered = await client.payments.events.emit(
+    { ...event, status: payment.status },
+    { allowUnverified: true },
+  );
 
   reply.code(200).send({ received: true, delivered });
 }

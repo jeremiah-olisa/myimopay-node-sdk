@@ -69,6 +69,8 @@ table with fixes is in [errors.md](errors.md).
 
 ### `initiate(input, options?) → Promise<PaymentInitiation>`
 
+`amount` is major units (`1500` = ₦1,500.00), never kobo.
+
 `POST /vi/pay/initiate` · **public** · retried on failure (safe: `tx_ref` is the
 provider's de-duplication key).
 
@@ -165,6 +167,7 @@ const unsubscribe = client.payments.events.on(payment.reference, {
 
 // webhook route
 const event = MyImoPay.webhooks.constructEvent(rawBody, signature, { secret });
+// or, as the provider actually delivers: { allowUnsigned: true } — then verify
 await client.payments.events.emit(event);
 ```
 
@@ -178,11 +181,14 @@ A subscription costs one in-memory entry: **no timers, no polling, no background
 work**. `onSuccess`/`onFailed`/`onExpired` take a `PaymentEvent`
 (`{ reference, providerReference, status, raw }`).
 
-### `events.emit(event) → Promise<number>`
+### `events.emit(event, options?) → Promise<number>`
 
-Delivers a verified event to every subscriber for its reference and returns the
+Delivers an event to every subscriber for its reference and returns the
 delivery count.
 
+- An event marked `verified: false` is **rejected** unless you pass
+  `{ allowUnverified: true }`, which asserts that you verified the payment
+  server-side first. A forged webhook therefore cannot reach `onSuccess`.
 - Only terminal statuses deliver (`succeeded`, `failed`, `expired`).
   `initiated`, `pending` and `unknown` emit nothing and return `0`, without
   consuming the subscription.
@@ -396,7 +402,7 @@ const order = await client.settlementOrders.create({
 
 ## Webhooks
 
-`constructEvent(rawBody, signature, { secret, headerName? }) → WebhookEvent`
+`constructEvent(rawBody, signature, options) → WebhookEvent`
 
 | Field               | Type             | Source                                                    |
 | ------------------- | ---------------- | --------------------------------------------------------- |
@@ -408,6 +414,7 @@ const order = await client.settlementOrders.create({
 | `amountPaid`        | `number`         | `paid_amount`, falling back to `charged_amount`, then `0` |
 | `currency`          | `string`         | upper-cased `currency`, default `NGN`                     |
 | `eventId`           | `string \| null` | `id` or `identifier`                                      |
+| `verified`          | `boolean`        | `true` only when the HMAC was checked against your secret |
 | `raw`               | `unknown`        | the whole parsed delivery, envelope included              |
 
 Both delivery shapes are accepted: a bare payload, and a `{ header, data }`

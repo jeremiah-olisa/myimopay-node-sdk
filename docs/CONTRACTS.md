@@ -205,21 +205,22 @@ removed: a library that polls verification on your behalf invites duplicate
 provider load and a self-inflicted denial of service, so reconciliation belongs
 in the caller's job scheduler. The lifecycle is event-based instead.
 
-| Symbol                   | Signature                                                                                                                                 |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `PaymentEvent`           | `{ reference: string; providerReference: string \| null; status: PaymentStatus; raw: unknown }`                                           |
-| `PaymentEventOutcome`    | `'succeeded' \| 'failed' \| 'expired' \| 'timeout' \| 'cancelled'`                                                                        |
-| `PaymentEventHandlers`   | `{ onSuccess?; onFailed?; onExpired? }` — each `(event: PaymentEvent) => void \| Promise<void>`; `onClose?(outcome: PaymentEventOutcome)` |
-| `PaymentEventOptions`    | `{ ttlMs?: number }` — per-subscription lifetime, default 30 minutes                                                                      |
-| `PaymentEventBus`        | `on(reference, handlers, options?) => () => void` · `emit(event) => Promise<number>` · `readonly size: number` · `clear(): void`          |
-| `PaymentEventBusOptions` | `{ ttlMs?: number (1800000); maxSubscriptions?: number (10000) }`                                                                         |
+| Symbol                   | Signature                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PaymentEvent`           | `{ reference: string; providerReference: string \| null; status: PaymentStatus; raw: unknown }`                                                                           |
+| `PaymentEventOutcome`    | `'succeeded' \| 'failed' \| 'expired' \| 'timeout' \| 'cancelled'`                                                                                                        |
+| `PaymentEventHandlers`   | `{ onSuccess?; onFailed?; onExpired? }` — each `(event: PaymentEvent) => void \| Promise<void>`; `onClose?(outcome: PaymentEventOutcome)`                                 |
+| `PaymentEventOptions`    | `{ ttlMs?: number }` — per-subscription lifetime, default 30 minutes                                                                                                      |
+| `PaymentEventBus`        | `on(reference, handlers, options?) => () => void` · `emit(event, options?: { allowUnverified?: boolean }) => Promise<number>` · `readonly size: number` · `clear(): void` |
+| `PaymentEventBusOptions` | `{ ttlMs?: number (1800000); maxSubscriptions?: number (10000) }`                                                                                                         |
 
 Call order and guarantees:
 
 1. `on()` subscribes to one reference before the payer is redirected and
    returns an idempotent unsubscribe. A subscription is one in-memory map entry:
    no timer, no polling and no background work, so the bus is idle until `emit`.
-2. `emit(event)` is called from the webhook route with a verified event. Only
+2. `emit(event)` is called from the webhook route. An event with `verified: false`
+   is rejected unless `{ allowUnverified: true }` is passed. Only
    terminal statuses deliver (`succeeded \| failed \| expired`); `initiated`,
    `pending` and `unknown` emit nothing and return `0` without consuming the
    subscription.
@@ -243,32 +244,33 @@ Call order and guarantees:
 
 ### Webhooks
 
-| Symbol                   | Signature                                                                                                                                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WebhookEvent`           | `{ reference: string; providerReference: string \| null; status: PaymentStatus; rawStatus: number \| null; isSettled: boolean; amountPaid: number; currency: string; eventId: string \| null; raw: unknown }` |
-| `WebhookOptions`         | `{ secret: string; headerName?: string }`                                                                                                                                                                     |
-| `verifyWebhookSignature` | `(rawBody: string \| Uint8Array, signature: string \| null \| undefined, secret: string) => boolean`                                                                                                          |
-| `constructEvent`         | `(rawBody: string \| Uint8Array, signature: string \| null \| undefined, options: WebhookOptions) => WebhookEvent`                                                                                            |
-| `signWebhookPayload`     | `(rawBody: string, secret: string) => string`                                                                                                                                                                 |
+| Symbol                   | Signature                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WebhookEvent`           | `{ reference; providerReference; status; rawStatus; isSettled; amountPaid; currency; eventId; verified: boolean; raw }` — `verified` is true only for an HMAC-checked delivery |
+| `WebhookOptions`         | `{ secret: string; headerName?: string; allowUnsigned?: never } \| { allowUnsigned: true; headerName?: string; secret?: never }` — omitting both is a type error               |
+| `verifyWebhookSignature` | `(rawBody: string \| Uint8Array, signature: string \| null \| undefined, secret: string) => boolean`                                                                           |
+| `constructEvent`         | `(rawBody: string \| Uint8Array, signature: string \| null \| undefined, options: WebhookOptions) => WebhookEvent`                                                             |
+| `signWebhookPayload`     | `(rawBody: string, secret: string) => string`                                                                                                                                  |
 
 ## `myimopay-browser`
 
 No key parameter exists in this package, by design.
 
-| Symbol                  | Signature                                                                                                                                                                                                   |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CheckoutMode`          | `'redirect' \| 'popup'`                                                                                                                                                                                     |
-| `CheckoutOutcome`       | `'redirected' \| 'returned' \| 'closed' \| 'blocked' \| 'timeout' \| 'succeeded' \| 'failed' \| 'expired' \| 'error'`                                                                                       |
-| `WindowLike`            | `{ readonly closed: boolean; readonly location: { assign(url: string): void }; open(url: string, target?: string, features?: string): WindowLike \| null }`                                                 |
-| `CheckoutHandlers`      | `{ onOpen?(url); onReturn?(hint: CheckoutHint); onBlocked?(url); onSuccess?(p: VerifiedPayment); onFailed?(p); onExpired?(p); onCancelled?(); onError?(error: unknown); onClose?(result: CheckoutResult) }` |
-| `CheckoutOptions`       | `CheckoutHandlers & { mode?; window?; timeoutMs?; popupFeatures?; verify?: (reference: string) => Promise<VerifiedPayment>; pollIntervalMs? (2000); pollTimeoutMs? (120000) }`                              |
-| `CheckoutResult`        | `{ outcome: CheckoutOutcome; url: string; reference: string \| null; payment: VerifiedPayment \| null }`                                                                                                    |
-| `Checkout`              | `{ open(url: string, options?: { reference?: string }): Promise<CheckoutResult>; resume(href: string, options?: { reference?: string; expectedReference?: string }): Promise<CheckoutResult> }`             |
-| `createCheckout`        | `(options?: CheckoutOptions) => Checkout`                                                                                                                                                                   |
-| `CheckoutHint`          | `{ reference: string \| null; statusHint: string \| null; referenceMatches: boolean; rawQuery: Record<string, string>; verified: false }`                                                                   |
-| `parseCheckoutResult`   | `(search: string, options?: { expectedReference?: string }) => CheckoutHint`                                                                                                                                |
-| `formatAmount`          | `(amount: number, currency?: string, locale?: string) => string`                                                                                                                                            |
-| `describePaymentStatus` | `(status: PaymentStatus) => string`                                                                                                                                                                         |
+| Symbol                  | Signature                                                                                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CheckoutMode`          | `'redirect' \| 'popup'`                                                                                                                                                                                                                  |
+| `CheckoutOutcome`       | `'redirected' \| 'returned' \| 'closed' \| 'blocked' \| 'timeout' \| 'succeeded' \| 'failed' \| 'expired' \| 'error'`                                                                                                                    |
+| `WindowLike`            | `{ readonly closed: boolean; readonly location: { assign(url: string): void }; open(url: string, target?: string, features?: string): WindowLike \| null }`                                                                              |
+| `CheckoutHandlers`      | `CheckoutBaseHandlers & CheckoutStatusHandlers`: `{ onOpen?(url); onReturn?(hint); onBlocked?(url); onCancelled?(); onError?(error); onClose?(result) } & `{ onSuccess?(p); onFailed?(p); onExpired?(p) }`                               |
+| `VerifyCheckout`        | `(reference: string) => Promise<VerifiedPayment>` — your backend, never the gateway                                                                                                                                                      |
+| `CheckoutOptions`       | `(CheckoutBaseOptions & CheckoutStatusHandlers & { verify: VerifyCheckout }) \| (CheckoutBaseOptions & { verify?: never; onSuccess?: never; onFailed?: never; onExpired?: never })` — status callbacks are a type error without `verify` |     |
+| `CheckoutResult`        | `{ outcome: CheckoutOutcome; url: string; reference: string \| null; payment: VerifiedPayment \| null }`                                                                                                                                 |
+| `Checkout`              | `{ open(url: string, options?: { reference?: string }): Promise<CheckoutResult>; resume(href: string, options?: { reference?: string; expectedReference?: string }): Promise<CheckoutResult> }`                                          |
+| `createCheckout`        | `(options?: CheckoutOptions) => Checkout`                                                                                                                                                                                                |
+| `CheckoutHint`          | `{ reference: string \| null; statusHint: string \| null; referenceMatches: boolean; rawQuery: Record<string, string>; verified: false }`                                                                                                |
+| `parseCheckoutResult`   | `(search: string, options?: { expectedReference?: string }) => CheckoutHint`                                                                                                                                                             |
+| `formatAmount`          | `(amount: number, currency?: string, locale?: string) => string`                                                                                                                                                                         |
+| `describePaymentStatus` | `(status: PaymentStatus) => string`                                                                                                                                                                                                      |
 
 Lifecycle rules: `onOpen` fires once; `onReturn` fires only via `resume()`; status callbacks **only** fire when `verify` is configured (the return URL is a hint, never proof); `resume()` resolves `returned` when there is no reference or no `verify`; `onCancelled` covers closed/timeout/returned without a terminal status; `onClose` always fires last, exactly once, and no poll survives it.
 

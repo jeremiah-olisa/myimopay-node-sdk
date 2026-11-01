@@ -186,6 +186,36 @@ describe('createPaymentEventBus', () => {
     expect(seen).toEqual(['closed']);
   });
 
+  it('refuses an unverified event so a forged webhook cannot grant value', async () => {
+    const bus = createPaymentEventBus();
+    const seen: string[] = [];
+
+    bus.on('ref-1', { onSuccess: () => void seen.push('paid') });
+
+    await expect(bus.emit({ ...event('ref-1', 'succeeded'), verified: false })).rejects.toThrow(
+      MyImoPayValidationError,
+    );
+    expect(seen).toEqual([]);
+    expect(bus.size).toBe(1);
+  });
+
+  it('delivers an unverified event only after the caller confirms verification', async () => {
+    const bus = createPaymentEventBus();
+    const seen: string[] = [];
+
+    bus.on('ref-1', { onSuccess: () => void seen.push('paid') });
+
+    const delivered = await bus.emit(
+      { ...event('ref-1', 'succeeded'), verified: false },
+      {
+        allowUnverified: true,
+      },
+    );
+
+    expect(delivered).toBe(1);
+    expect(seen).toEqual(['paid']);
+  });
+
   it('rejects a subscription without a reference or handlers', () => {
     const bus = createPaymentEventBus();
 

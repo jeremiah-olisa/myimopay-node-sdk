@@ -20,7 +20,7 @@
  * records (or `payments.verify`) before granting value.
  */
 
-import { constructEvent, MyImoPay, type PaymentEvent } from 'myimopay';
+import { constructEvent, isPaid, MyImoPay, type PaymentEvent } from 'myimopay';
 
 /** Examples print to stdout; the SDK itself never writes anywhere. */
 function log(message: string): void {
@@ -34,9 +34,6 @@ const client = new MyImoPay({
   secretKey: 'sk_staging_replace_me',
   maxAmount: 5000,
 });
-
-/** Replace with a value read from your secret manager at boot. */
-const WEBHOOK_SECRET = 'whsec_replace_me';
 
 /** The amount you recorded when the order was created. */
 async function amountFromOwnStore(reference: string): Promise<number | null> {
@@ -109,9 +106,17 @@ export async function createPayment(input: {
  * (0) from a real delivery (1 or more).
  */
 export async function receiveWebhook(rawBody: string, signature: string | null): Promise<number> {
-  const event = constructEvent(rawBody, signature, { secret: WEBHOOK_SECRET });
+  // Unsigned, as the provider sends it. With a signing proxy, pass { secret }.
+  const event = constructEvent(rawBody, signature, { allowUnsigned: true });
+
+  // Never grant value from the delivery itself: verify the payment first.
+  const payment = await client.payments.verify(event.reference);
+  if (!isPaid(payment)) return 0;
 
   // A re-delivered webhook returns 0 and cannot grant value twice: the bus
   // drops the subscription on the first terminal delivery.
-  return client.payments.events.emit(event);
+  return client.payments.events.emit(
+    { ...event, status: payment.status },
+    { allowUnverified: true },
+  );
 }

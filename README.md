@@ -53,8 +53,10 @@ const payment = await client.payments.initiate({ amount: 1500, customer });
 const verified = await client.payments.verify(payment.reference); // 'succeeded' means paid
 ```
 
-Send the payer to `payment.authorizationUrl`. `environment` is required and has
-no default: guessing it is how a staging build ends up billing a live account.
+`amount` is in **major units**: `1500` is ₦1,500.00, not 1,500 kobo (unlike
+Paystack). Send the payer to `payment.authorizationUrl`. `environment` has no default:
+guessing it is how a staging build ends up billing a live account. It is only
+optional when you pass an explicit `baseUrl` (for a proxy or a mock).
 
 `reference` (or `payment.reference`) is the provider's **idempotency key**: at
 most 20 characters of `[A-Za-z0-9._-]`, validated locally. Reuse it when retrying
@@ -66,7 +68,7 @@ that creates it, then emit the verified webhook into the bus:
 
 ```ts
 // route that creates the payment
-const unsubscribe = client.payments.events.on(payment.reference, {
+client.payments.events.on(payment.reference, {
   onSuccess: (event) => grantValue(event.reference),
   onFailed: (event) => releaseReservation(event.reference),
   onExpired: (event) => releaseReservation(event.reference),
@@ -78,7 +80,8 @@ const event = MyImoPay.webhooks.constructEvent(rawBody, signature, { secret });
 await client.payments.events.emit(event);
 ```
 
-A subscription is one in-memory entry: no timers, no background work. Only
+`on()` returns an unsubscribe function if you need to cancel it. A subscription
+is one in-memory entry: no timers, no background work. Only
 terminal statuses deliver, delivery happens once per reference, and `onClose`
 fires exactly once and last. The bus is **per-process** — with several instances
 the webhook may land on a process holding no subscription, so route the delivery

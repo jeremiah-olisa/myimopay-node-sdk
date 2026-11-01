@@ -268,13 +268,36 @@ describe('constructEvent', () => {
     );
   });
 
-  it('rejects an empty secret instead of accepting an unsigned delivery', () => {
+  it('rejects an empty secret unless the caller explicitly allows unsigned deliveries', () => {
     const body = JSON.stringify({ data: payload() });
 
     expectWebhookError(
       () => constructEvent(body, signWebhookPayload(body, SECRET), { secret: '  ' }),
-      /secret is required/,
+      /either a shared secret or allowUnsigned/,
     );
+  });
+
+  it('parses an unsigned delivery only when explicitly allowed, and marks it unverified', () => {
+    const body = JSON.stringify({ data: payload() });
+
+    const event = constructEvent(body, null, { allowUnsigned: true });
+
+    expect(event.verified).toBe(false);
+    expect(event.reference).toBe('TX-1042');
+  });
+
+  it('marks a verified delivery as verified', () => {
+    const body = JSON.stringify({ data: payload() });
+
+    const event = constructEvent(body, signWebhookPayload(body, SECRET), { secret: SECRET });
+
+    expect(event.verified).toBe(true);
+  });
+
+  it('does not require a signature when unsigned delivery is allowed', () => {
+    const body = JSON.stringify({ data: payload() });
+
+    expect(() => constructEvent(body, 'not-a-digest', { allowUnsigned: true })).not.toThrow();
   });
 
   it('rejects an empty headerName when one is provided', () => {

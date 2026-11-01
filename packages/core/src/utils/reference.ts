@@ -59,17 +59,18 @@ function sanitizeSeed(seed: string): string {
 export function assertReference(reference: unknown, field = 'reference'): string {
   const expected =
     `${field} must be 1 to ${MAX_REFERENCE_LENGTH} characters long, may only use ` +
-    '[A-Za-z0-9._-], and must contain at least one letter or digit. ' +
-    'Pass your own identifier through sanitizeReference() if it needs other characters.';
+    '[A-Za-z0-9._-], and must contain at least one letter or digit';
+
+  const hint = ', or pass your own identifier through sanitizeReference() first';
 
   if (typeof reference !== 'string') {
-    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}.`, field);
+    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}${hint}.`, field);
   }
   if (reference.length === 0 || reference.length > MAX_REFERENCE_LENGTH) {
-    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}.`, field);
+    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}${hint}.`, field);
   }
   if (!REFERENCE_PATTERN.test(reference) || SEPARATORS_ONLY.test(reference)) {
-    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}.`, field);
+    throw new MyImoPayValidationError(`${expected}; received ${show(reference)}${hint}.`, field);
   }
   return reference;
 }
